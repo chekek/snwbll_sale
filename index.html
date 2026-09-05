@@ -140,10 +140,10 @@
   <h1 class="rise" style="animation-delay:.08s">Внутри<br>идёт снег.</h1>
   <p class="lead rise" style="animation-delay:.16s">
     Стеклянный шар ручной выдувки: домик, ёлка и окно, в котором всегда горит свет.
-    Наклоните его — и снег послушно осядет к нижнему краю. Встряхните — снова метель.
-    Как в детстве, только теперь он стоит на вашем столе.
+    Наклоните его — и снег послушно осядет к нижнему краю. Встряхните — снова метель,
+    а через минуту на крыше вырастет сугроб. Как в детстве, только теперь он стоит на вашем столе.
   </p>
-  <div class="specs rise" style="animation-delay:.22s">Выдувное стекло · высота 16 см · латунная база · вода с глицерином</div>
+  <div class="specs rise" style="animation-delay:.22s">Выдувное стекло · высота 16 см · латунная база · гравировка на поясе</div>
   <div class="cta rise" style="animation-delay:.28s">
     <button class="btn primary" id="orderBtn">Заказать — 4 900 ₽</button>
     <button class="btn ghost" id="shakeBtn" aria-label="Встряхнуть шар">
@@ -153,7 +153,7 @@
       Встряхнуть шар
     </button>
   </div>
-  <div class="foot rise" style="animation-delay:.34s">Внутри <span id="flakeCount">750</span> снежинок — и ни одна не падает одинаково.</div>
+  <div class="foot rise" style="animation-delay:.34s">Внутри <span id="flakeCount">1500</span> снежинок — и ни одна не падает одинаково.</div>
 </main>
 
 <div class="hint" id="hint">
@@ -164,7 +164,7 @@
     <rect x="7" y="2" width="10" height="20" rx="2.5"/><path d="M11 18.5h2"/>
   </svg>
   <div class="hintcol">
-    <span id="hintText">Вращайте шар мышью. Резкий жест — метель; клик по шару — то же самое.</span>
+    <span id="hintText">Клик по шару или резкий жест — метель. Дайте снегу осесть — на крыше и ёлке вырастут сугробы.</span>
     <span id="sensorLine" class="sensor-line" hidden></span>
   </div>
 </div>
@@ -178,14 +178,17 @@
 
 <script type="module">
 import * as THREE from 'three';
-import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { BokehPass } from 'three/addons/postprocessing/BokehPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 
-/* ============ маркер версии: эта плашка обязана появиться в консоли ============ */
-console.log('%c снежный шар · v3 ', 'background:#c8a25c;color:#191207;font-weight:bold;padding:2px 8px');
+/* ============ маркер версии ============ */
+console.log('%c снежный шар · v4 ', 'background:#c8a25c;color:#191207;font-weight:bold;padding:2px 8px');
 
-/* ============ панель ошибок прямо на странице ============
-   если какой-то шейдер не соберётся, сверху появится красная панель
-   с точным текстом ошибки GLSL — этот текст можно скопировать с экрана */
+/* ============ панель ошибок на странице (временная) ============ */
 const errBox = document.createElement('pre');
 errBox.style.cssText =
   'position:fixed;top:0;left:0;right:0;z-index:999;max-height:42vh;overflow:auto;margin:0;' +
@@ -199,9 +202,8 @@ function reportError(txt){
   if (errCount > 5) return;
   errBox.style.display = 'block';
   const key = txt.split('\n').filter(l => /ERROR|undeclared|syntax|invalid|expected/i.test(l)).slice(0, 8).join('\n');
-  const head = txt.slice(0, 400);
   errBox.textContent += (errCount > 1 ? '\n————\n' : '')
-    + (key ? key + '\n——\n' : '') + head;
+    + (key ? key + '\n——\n' : '') + txt.slice(0, 400);
 }
 for (const kind of ['error', 'warn']){
   const orig = console[kind].bind(console);
@@ -216,59 +218,104 @@ for (const kind of ['error', 'warn']){
 }
 addEventListener('error', e => reportError('JS: ' + (e.message || 'ошибка') + (e.lineno ? ' (строка ' + e.lineno + ')' : '')));
 
-/* ================= константы ================= */
-const N     = 750;    // снежинок внутри шара
-const R_IN  = 0.965;  // внутренний радиус стекла (юниты: стекло = 1)
-const G     = 0.62;   // «гравитация» в масштабе шара
-
+/* ================= конфигурация ================= */
+const coarse = matchMedia('(pointer: coarse)').matches;
+const fine   = matchMedia('(pointer: fine)').matches;
+const N     = coarse ? 900 : 1500;   // снежинок внутри шара
+const R_IN  = 0.965;                 // внутренний радиус стекла
+const G     = 0.62;                  // «гравитация» в масштабе шара
 document.getElementById('flakeCount').textContent = N;
 
-/* ================= сцена ================= */
+/* ================= сцена и рендер ================= */
 const canvas   = document.getElementById('scene');
-const renderer = new THREE.WebGLRenderer({ canvas, antialias:true, powerPreference:'high-performance' });
-renderer.setPixelRatio(Math.min(2, window.devicePixelRatio));
+const renderer = new THREE.WebGLRenderer({ canvas, antialias:false, powerPreference:'high-performance' });
+let PR = coarse ? Math.min(2, devicePixelRatio||1)
+                : Math.min(2.25, Math.max(1.5, devicePixelRatio||1));
+renderer.setPixelRatio(PR);
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.05;
+renderer.toneMappingExposure = 1.06;
 
-const scene = new THREE.Scene();
+const scene  = new THREE.Scene();
 scene.background = new THREE.Color(0x0a0e16);
-
 const camera = new THREE.PerspectiveCamera(34, 1, 0.1, 60);
 
-const pmrem = new THREE.PMREMGenerator(renderer);
-scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-pmrem.dispose();
+/* ---- окружение: «лайтформеры» вместо RoomEnvironment ----
+   стекло и латунь на 70% состоят из отражений — длинные яркие полосы
+   дают те самые блики, по которым глаз читает «дорогое стекло» */
+function buildEnvironment(){
+  const env = new THREE.Scene();
+  const lf = (w, h, color, k, pos) => {
+    const m = new THREE.Mesh(
+      new THREE.PlaneGeometry(w, h),
+      new THREE.MeshBasicMaterial({ color: new THREE.Color(color).multiplyScalar(k), side: THREE.DoubleSide })
+    );
+    m.position.set(...pos);
+    m.lookAt(0, 0, 0);
+    env.add(m);
+  };
+  lf(7, 4.5, 0xffdfae, 5.5, [-5, 2.2, 4]);      // тёплый софтбокс слева
+  lf(1.2, 8, 0x9db9ee, 5.0, [5, 1.2, -4]);      // холодная узкая полоса справа-сзади
+  lf(9, 1.0, 0xffffff, 2.4, [0.6, 6, 1.5]);     // полоса сверху
+  lf(0.8, 0.8, 0xfff3da, 26, [2.5, 3.5, 2.5]);  // горячая «искра» для бликов латуни
+  lf(12, 12, 0x2a2015, 1.0, [0, -6, -1.5]);     // тёплый пол (отражение в базу)
+  const pm = new THREE.PMREMGenerator(renderer);
+  const tex = pm.fromScene(env, 0.05).texture;
+  pm.dispose();
+  return tex;
+}
+scene.environment = buildEnvironment();
 
-scene.add(new THREE.HemisphereLight(0x8fb4dd, 0x1a1410, 0.35));
-const key = new THREE.DirectionalLight(0xffe7c4, 1.4); key.position.set(2.4, 3.2, 2.2); scene.add(key);
-const rim = new THREE.DirectionalLight(0xb9d0ff, 0.8); rim.position.set(-3, 1.6, -2.6); scene.add(rim);
+scene.add(new THREE.HemisphereLight(0x8fb4dd, 0x1a1410, 0.3));
+const key = new THREE.DirectionalLight(0xffe7c4, 1.15); key.position.set(2.4, 3.2, 2.2); scene.add(key);
+const rim = new THREE.DirectionalLight(0xb9d0ff, 0.55); rim.position.set(-3, 1.6, -2.6); scene.add(rim);
 
-/* ================= сам шар ================= */
+/* ================= шар ================= */
 const rig = new THREE.Group();
 scene.add(rig);
 
-/* --- стекло с преломлением --- */
+/* ---- стекло: преломление + attenuation (лёгкая «дымка глубины») ---- */
 const glass = new THREE.Mesh(
   new THREE.SphereGeometry(1, 64, 48),
   new THREE.MeshPhysicalMaterial({
     transmission: 1, thickness: 0.55, ior: 1.45,
-    roughness: 0.07, metalness: 0,
+    roughness: 0.06, metalness: 0,
     clearcoat: 1, clearcoatRoughness: 0.08,
+    attenuationColor: new THREE.Color(0xe9f1f8), attenuationDistance: 3.4,
     envMapIntensity: 1.0
   })
 );
 rig.add(glass);
 
-/* --- снежный холм (его же сфера — физический коллайдер) --- */
+/* ---- «играющий» снег: блики-искры на холме, шапках ёлки, снеговике ---- */
+const sparkU = [];
+function snowSurface(color){
+  const m = new THREE.MeshStandardMaterial({ color, roughness: 0.93, metalness: 0 });
+  m.onBeforeCompile = (sh) => {
+    sh.uniforms.uSpT = { value: 0 };
+    sparkU.push(sh.uniforms.uSpT);
+    sh.fragmentShader = 'uniform float uSpT;\n' + sh.fragmentShader.replace(
+      '#include <emissivemap_fragment>',
+      `#include <emissivemap_fragment>
+      {
+        vec3 vDir = normalize(vViewPosition);
+        vec3 hv = normalize(vDir + vec3(0.38, 0.52, 0.76));
+        float spec = pow(max(dot(normal, hv), 0.0), 52.0);
+        vec3 cell = floor(vViewPosition * 300.0);
+        float n = fract(sin(dot(cell, vec3(12.9898, 78.233, 37.719))) * 43758.5453);
+        float tw = step(0.55, fract(n * 9.0 + uSpT * 0.22));
+        totalEmissiveRadiance += vec3(1.0, 0.98, 0.9) * step(0.968, n) * spec * 2.6 * tw;
+      }`);
+  };
+  return m;
+}
+
+/* ---- снежный холм (коллайдер чуть больше меша — снег лежит «на» поверхности) ---- */
 const HILL = { x:0, y:-1.02, z:0, r:0.578, mu:0.55 };
-const hillMesh = new THREE.Mesh(
-  new THREE.SphereGeometry(0.56, 48, 32),
-  new THREE.MeshStandardMaterial({ color:0xe9eef5, roughness:0.92 })
-);
+const hillMesh = new THREE.Mesh(new THREE.SphereGeometry(0.56, 48, 32), snowSurface(0xe8edf4));
 hillMesh.position.set(0, -1.02, 0);
 rig.add(hillMesh);
 
-/* --- домик --- */
+/* ---- домик ---- */
 const house = new THREE.Group();
 house.position.set(-0.34, -0.60, -0.08);
 house.rotation.y = 0.38;
@@ -286,7 +333,8 @@ house.rotation.y = 0.38;
   const frame = new THREE.Mesh(new THREE.PlaneGeometry(0.122, 0.106), new THREE.MeshStandardMaterial({ color:0x241a12, roughness:0.8 }));
   frame.position.set(0.055, 0.115, 0.1205); house.add(frame);
 }
-const winMat = new THREE.MeshBasicMaterial({ color:0xffc37a, toneMapped:false });
+/* окно: значение >1 — после bloom получит ореол (значения линейные, bloom идёт до тонмаппинга) */
+const winMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(2.2, 1.15, 0.5), toneMapped:false });
 {
   const win = new THREE.Mesh(new THREE.PlaneGeometry(0.1, 0.085), winMat);
   win.position.set(0.055, 0.115, 0.1235); house.add(win);
@@ -295,34 +343,73 @@ const winMat = new THREE.MeshBasicMaterial({ color:0xffc37a, toneMapped:false })
   const h = new THREE.Mesh(new THREE.PlaneGeometry(0.1, 0.009), mullMat);   h.position.set(0.055, 0.115, 0.1245); house.add(h);
 }
 rig.add(house);
-const winLight = new THREE.PointLight(0xffb264, 1.1, 1.2, 2);
+const winLight = new THREE.PointLight(0xffb264, 1.3, 1.2, 2);
 winLight.position.set(-0.30, -0.44, 0.10);
 rig.add(winLight);
 
-/* --- ёлка --- */
+/* ---- ёлка ---- */
 const tree = new THREE.Group();
 tree.position.set(0.36, -0.60, 0.10);
 {
   const green = new THREE.MeshStandardMaterial({ color:0x1f4636, roughness:0.85 });
-  const snow  = new THREE.MeshStandardMaterial({ color:0xeef2f6, roughness:0.95 });
+  const capMat = snowSurface(0xeef2f6);
   const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.028, 0.04, 0.12, 8),
     new THREE.MeshStandardMaterial({ color:0x4a3323, roughness:0.9 }));
   trunk.position.y = 0.04; tree.add(trunk);
   const tiers = [[0.17,0.22,0.20],[0.125,0.19,0.36],[0.085,0.16,0.49]];
   for (const [r,h,y] of tiers){
     const c = new THREE.Mesh(new THREE.ConeGeometry(r, h, 10), green); c.position.y = y; tree.add(c);
-    const s = new THREE.Mesh(new THREE.ConeGeometry(r*0.72, h*0.32, 10), snow); s.position.y = y + h*0.38; tree.add(s);
+    const s = new THREE.Mesh(new THREE.ConeGeometry(r*0.72, h*0.32, 10), capMat); s.position.y = y + h*0.38; tree.add(s);
   }
 }
 rig.add(tree);
 
-/* --- латунная база --- */
+/* ---- латунная база с гравировкой ---- */
+function makeEngraving(){
+  const W = 2048, H = 256;
+  const c = document.createElement('canvas'); c.width = W; c.height = H;
+  const g = c.getContext('2d');
+  const draw = () => {
+    const lg = g.createLinearGradient(0, 0, 0, H);
+    lg.addColorStop(0,'#8f6d36'); lg.addColorStop(.3,'#c9a45f'); lg.addColorStop(.5,'#e9cf8f');
+    lg.addColorStop(.7,'#b28c4e'); lg.addColorStop(1,'#7a5c2e');
+    g.fillStyle = lg; g.fillRect(0, 0, W, H);
+    g.strokeStyle = 'rgba(70,50,18,0.5)'; g.lineWidth = 3;
+    for (const y of [38, 218]){ g.beginPath(); g.moveTo(0, y); g.lineTo(W, y); g.stroke(); }
+    const line = (txt, y, size, ls) => {
+      g.font = `600 ${size}px "Golos Text", Georgia, serif`;
+      g.textBaseline = 'middle'; g.textAlign = 'left';
+      const chars = [...txt];
+      const ws = chars.map(ch => g.measureText(ch).width);
+      const total = ws.reduce((a,b)=>a+b,0) + ls*(chars.length-1);
+      for (const cx of [W/2, W/2 + W, W/2 - W]){   // три копии — сплошность через шов цилиндра
+        let x = cx - total/2;
+        for (let k = 0; k < chars.length; k++){
+          g.fillStyle = 'rgba(243,222,168,0.7)'; g.fillText(chars[k], x, y - 1.5);
+          g.fillStyle = 'rgba(56,38,12,0.92)';   g.fillText(chars[k], x, y + 1.5);
+          x += ws[k] + ls;
+        }
+      }
+    };
+    line('«ТИХИЙ ВЕЧЕР»', H*0.40, 66, 26);
+    line('— № 4 —',      H*0.63, 38, 18);
+  };
+  draw();
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+  tex.wrapS = THREE.RepeatWrapping;
+  if (document.fonts && document.fonts.ready)
+    document.fonts.ready.then(() => { draw(); tex.needsUpdate = true; });
+  return tex;
+}
 {
-  const brass = new THREE.MeshStandardMaterial({ color:0xb08a4c, metalness:1.0, roughness:0.34, envMapIntensity:1.15 });
+  const brass = new THREE.MeshStandardMaterial({ color:0xb08a4c, metalness:1.0, roughness:0.34, envMapIntensity:1.3 });
+  const beltMat = new THREE.MeshStandardMaterial({ map: makeEngraving(), metalness:1.0, roughness:0.32, envMapIntensity:1.3 });
   const wood  = new THREE.MeshStandardMaterial({ color:0x2a1f18, roughness:0.7 });
   const collar = new THREE.Mesh(new THREE.TorusGeometry(0.60, 0.05, 24, 64), brass);
   collar.rotation.x = Math.PI/2; collar.position.y = -0.80; rig.add(collar);
-  const belt = new THREE.Mesh(new THREE.CylinderGeometry(0.58, 0.63, 0.30, 64), brass);
+  const belt = new THREE.Mesh(new THREE.CylinderGeometry(0.58, 0.63, 0.30, 64), beltMat);
   belt.position.y = -0.97; rig.add(belt);
   const insert = new THREE.Mesh(new THREE.CylinderGeometry(0.615, 0.625, 0.07, 64), wood);
   insert.position.y = -0.87; rig.add(insert);
@@ -330,7 +417,64 @@ rig.add(tree);
   foot.position.y = -1.15; rig.add(foot);
 }
 
-/* --- мягкая тень под шаром --- */
+/* ---- пропсы: уличный фонарь, снеговик, тропинка ---- */
+function hillY(x, z, r){   // высота поверхности холма
+  const d2 = x*x + z*z;
+  if (d2 >= r*r) return -1.02;
+  return -1.02 + Math.sqrt(r*r - d2);
+}
+const lampGlowMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(2.0, 1.05, 0.45), toneMapped:false });
+const lanternLight = new THREE.PointLight(0xffb264, 0.85, 0.8, 2);
+{
+  const LAMP_POS = { x:0.05, y:hillY(0.05, 0.30, 0.56) - 0.002, z:0.30 };
+  const brass = new THREE.MeshStandardMaterial({ color:0x8f6d36, metalness:1, roughness:0.4 });
+  const dark  = new THREE.MeshStandardMaterial({ color:0x241c14, metalness:0.4, roughness:0.5 });
+  const lamp = new THREE.Group();
+  lamp.position.set(LAMP_POS.x, LAMP_POS.y, LAMP_POS.z);
+  const base = new THREE.Mesh(new THREE.CylinderGeometry(0.034, 0.042, 0.02, 12), brass); base.position.y = 0.01; lamp.add(base);
+  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.010, 0.014, 0.155, 10), dark); pole.position.y = 0.095; lamp.add(pole);
+  const plate = new THREE.Mesh(new THREE.CylinderGeometry(0.024, 0.024, 0.008, 10), dark); plate.position.y = 0.128; lamp.add(plate);
+  const glow = new THREE.Mesh(new THREE.BoxGeometry(0.032, 0.055, 0.032), lampGlowMat); glow.position.y = 0.158; lamp.add(glow);
+  const cap = new THREE.Mesh(new THREE.ConeGeometry(0.034, 0.03, 4), brass); cap.rotation.y = Math.PI/4; cap.position.y = 0.193; lamp.add(cap);
+  const capSnow = new THREE.Mesh(new THREE.ConeGeometry(0.028, 0.02, 10), snowSurface(0xeef2f6)); capSnow.position.y = 0.208; lamp.add(capSnow);
+  rig.add(lamp);
+  lanternLight.position.set(LAMP_POS.x, LAMP_POS.y + 0.158, LAMP_POS.z);
+  rig.add(lanternLight);
+}
+{
+  const snowman = new THREE.Group();
+  snowman.position.set(0.15, hillY(0.15, 0.24, 0.56) - 0.002, 0.24);
+  const mat = snowSurface(0xf2f5f9);
+  const b1 = new THREE.Mesh(new THREE.SphereGeometry(0.047, 20, 14), mat); b1.position.y = 0.047; snowman.add(b1);
+  const b2 = new THREE.Mesh(new THREE.SphereGeometry(0.035, 18, 12), mat); b2.position.y = 0.118; snowman.add(b2);
+  const b3 = new THREE.Mesh(new THREE.SphereGeometry(0.0255, 16, 12), mat); b3.position.y = 0.172; snowman.add(b3);
+  const nose = new THREE.Mesh(new THREE.ConeGeometry(0.0065, 0.024, 8), new THREE.MeshStandardMaterial({ color:0xc9662a, roughness:0.6 }));
+  nose.rotation.x = Math.PI/2; nose.position.set(0, 0.175, 0.028); snowman.add(nose);
+  const eyeMat = new THREE.MeshStandardMaterial({ color:0x201510, roughness:0.5 });
+  for (const sx of [-1, 1]){
+    const e = new THREE.Mesh(new THREE.SphereGeometry(0.004, 8, 6), eyeMat);
+    e.position.set(sx*0.009, 0.185, 0.023); snowman.add(e);
+  }
+  rig.add(snowman);
+}
+{
+  const pathMat = new THREE.MeshStandardMaterial({ color:0xd3c6a5, roughness:0.95 });
+  const A = { x:-0.30, z:0.09 }, C = { x:-0.12, z:0.27 }, B = { x:0.05, z:0.30 };
+  for (let k = 0; k <= 6; k++){
+    const t = k/6, it = 1 - t;
+    const x = it*it*A.x + 2*it*t*C.x + t*t*B.x;
+    const z = it*it*A.z + 2*it*t*C.z + t*t*B.z;
+    const y = hillY(x, z, 0.56) + 0.004;
+    const disc = new THREE.Mesh(new THREE.CircleGeometry(0.021 - t*0.004, 12), pathMat);
+    disc.scale.x = 1.3;
+    disc.position.set(x, y, z);
+    const nl = Math.hypot(x, y + 1.02, z) || 1;
+    disc.lookAt(x + x/nl, y + (y + 1.02)/nl, z + z/nl);
+    rig.add(disc);
+  }
+}
+
+/* ---- мягкая тень под шаром ---- */
 const shadow = (() => {
   const c = document.createElement('canvas'); c.width = c.height = 128;
   const g = c.getContext('2d');
@@ -339,45 +483,71 @@ const shadow = (() => {
   g.fillStyle = r; g.fillRect(0,0,128,128);
   const m = new THREE.Mesh(
     new THREE.PlaneGeometry(2.7, 2.7),
-    new THREE.MeshBasicMaterial({ map:new THREE.CanvasTexture(c), transparent:true, depthWrite:false, opacity:0.8 })
+    new THREE.MeshBasicMaterial({ map:new THREE.CanvasTexture(c), transparent:true, depthWrite:false, opacity:0.65 })
   );
   m.rotation.x = -Math.PI/2;
   scene.add(m);
   return m;
 })();
 
-/* ================= снежинки внутри шара ================= */
-function flakeTexture(){
-  const c = document.createElement('canvas'); c.width = c.height = 64;
-  const g = c.getContext('2d');
-  g.translate(32, 32);
-  g.strokeStyle = 'rgba(255,255,255,0.95)'; g.lineWidth = 3.1; g.lineCap = 'round';
-  for (let k = 0; k < 6; k++){
-    g.rotate(Math.PI/3);
-    g.beginPath(); g.moveTo(0,0); g.lineTo(0,-24); g.stroke();
-    g.beginPath(); g.moveTo(0,-13); g.lineTo(6.5,-19); g.moveTo(0,-13); g.lineTo(-6.5,-19); g.stroke();
-    g.beginPath(); g.moveTo(0,-19.5); g.lineTo(4.5,-23.5); g.moveTo(0,-19.5); g.lineTo(-4.5,-23.5); g.stroke();
-  }
-  return new THREE.CanvasTexture(c);
+/* ================= сугробы: поле высот поверх поверхностей =================
+   каждая поверхность разбита на «ячейки» (bins); снежинка, засыпая,
+   поднимает счётчик своей ячейки и ложится на высоту слоя.
+   Ячейка заполнена — снежинка скатывается вниз по склону. Так растут сугробы. */
+const BINS = [];
+function addBins(count, d, cap){
+  const s = BINS.length;
+  for (let k = 0; k < count; k++) BINS.push({ c:0, d, cap });
+  return s;
 }
-
-const P  = new Float32Array(N*3);
-const V  = new Float32Array(N*3);
-const RN = new Float32Array(N*3);
-const PH = new Float32Array(N);
-const FR = new Float32Array(N);
-const DRG= new Float32Array(N);
-const WAKE = new Float32Array(N);
-const RMU  = new Float32Array(N);
-const REST = new Uint8Array(N);
-
+const HILL_B  = addBins(80, 0.007, 6);   // холм: 16×5
+const SHELL_B = addBins(48, 0.004, 4);   // стекло у подножия: 24×2
 const TREES = [
   { x:0.36, y:-0.38, z:0.10, r:0.170, mu:0.5 },
   { x:0.36, y:-0.22, z:0.10, r:0.120, mu:0.5 },
   { x:0.36, y:-0.09, z:0.10, r:0.070, mu:0.5 },
   { x:0.36, y:-0.03, z:0.10, r:0.040, mu:0.5 }
 ];
-const HOUSE = { x:-0.34, y:-0.46, z:-0.08, hx:0.200, hy:0.180, hz:0.180, mu:0.55 };
+const TREE_B = TREES.map(() => addBins(36, 0.006, 5));
+TREES.forEach((t, ti) => {
+  t.binOf = (dx,dy,dz,nx,ny,nz) => {
+    const az = Math.floor(((Math.atan2(nz,nx)/(Math.PI*2)) + 0.5)*12) % 12;
+    const el = Math.min(2, Math.max(0, Math.floor(ny*3.2)));
+    return TREE_B[ti] + az*3 + el;
+  };
+});
+HILL.binOf = (dx,dy,dz,nx,ny,nz) => {
+  const az = Math.floor(((Math.atan2(nz,nx)/(Math.PI*2)) + 0.5)*16) % 16;
+  const el = Math.min(4, Math.max(0, Math.floor((ny - 0.3)*7)));
+  return HILL_B + az*5 + el;
+};
+/* пирамида крыши (учитывает поворот домика) */
+const HR = { x:-0.34, y:-0.60, z:-0.08, rot:0.38, rb:0.19, y0:0.12, y1:0.30, mu:0.5 };
+const HR_c = Math.cos(HR.rot), HR_s = Math.sin(HR.rot);
+const ROOF_B = addBins(64, 0.012, 6);    // 8×8 по скатам
+const CHIM_B = addBins(4, 0.008, 4);
+const CHIM = { x:-0.289, y:-0.30, z:-0.154, hx:0.033, hy:0.066, hz:0.033, mu:0.55,
+  binOf:(dx) => CHIM_B + (dx > 0 ? 2 : 0) };
+const WALLS = { x:-0.34, y:-0.50, z:-0.08, hx:0.21, hy:0.13, hz:0.21, mu:0.55 };
+const LAMP_COL = { x:0.05, y:-0.367, z:0.30, r:0.05, mu:0.5, binOf: () => addBins(0,0,0) };
+const LAMP_B = addBins(1, 0.008, 4); LAMP_COL.binOf = () => LAMP_B;
+const SMAN_COL = { x:0.15, y:-0.419, z:0.24, r:0.055, mu:0.5 };
+const SMAN_B = addBins(1, 0.007, 4); SMAN_COL.binOf = () => SMAN_B;
+
+/* ================= снежинки ================= */
+const P  = new Float32Array(N*3);   // позиции (локальные координаты шара)
+const V  = new Float32Array(N*3);   // скорости
+const RN = new Float32Array(N*3);   // нормаль опоры у «спящих»
+const PH = new Float32Array(N);     // фаза
+const FR = new Float32Array(N);     // индивидуальный множитель
+const DRG= new Float32Array(N);     // вязкость
+const WAKE = new Float32Array(N);   // личный порог пробуждения
+const RMU  = new Float32Array(N);   // трение поверхности
+const REST = new Uint8Array(N);     // 1 = лежит
+const FLBIN = new Int16Array(N).fill(-1); // ячейка сугроба
+const ANG = new Float32Array(N);    // текущий угол вращения
+const SPD = new Float32Array(N);    // скорость вращения
+const TEX = new Float32Array(N);    // вариант кристалла (атлас 2×2)
 
 function randUnit(){
   let x,y,z,l;
@@ -387,42 +557,132 @@ function randUnit(){
 }
 function insideHill(x,y,z){ return Math.hypot(x-HILL.x, y-HILL.y, z-HILL.z) < HILL.r + 0.01; }
 
+/* уложить снежинку в сугроб (поднять на высоту слоя её ячейки) */
+function deposit(i, bin, nx, ny, nz){
+  const b = BINS[bin];
+  b.c = Math.min(b.cap, b.c + 1);
+  FLBIN[i] = bin;
+  const off = 0.0015 + b.d * (b.c - 1);
+  P[i*3] += nx*off; P[i*3+1] += ny*off; P[i*3+2] += nz*off;
+  REST[i] = 1;
+  RN[i*3] = nx; RN[i*3+1] = ny; RN[i*3+2] = nz;
+}
+
+/* старт: половина снега уже лежит — сугробы частично сформированы */
 for (let i = 0; i < N; i++){
   const i3 = i*3;
   PH[i]  = Math.random();
   FR[i]  = Math.random();
   DRG[i] = 1.6 + Math.random()*0.6;
   WAKE[i]= 0.22 + Math.random()*0.5;
-  const lying = Math.random() < 0.45;
+  SPD[i] = (Math.random() < 0.5 ? -1 : 1) * (0.35 + Math.random()*1.4);
+  ANG[i] = Math.random()*6.283;
+  const tr = Math.random();
+  TEX[i] = tr < 0.40 ? 0 : tr < 0.65 ? 1 : tr < 0.85 ? 2 : 3;
+
+  const lying = Math.random() < 0.5;
   let placed = false;
   if (lying){
     const r = Math.random();
-    if (r < 0.40){
+    if (r < 0.34){ // холм
       let d; do { d = randUnit(); } while (d[1] < 0.42);
       P[i3]=HILL.x+d[0]*HILL.r; P[i3+1]=HILL.y+d[1]*HILL.r; P[i3+2]=HILL.z+d[2]*HILL.r;
-      RN[i3]=d[0]; RN[i3+1]=d[1]; RN[i3+2]=d[2]; RMU[i]=HILL.mu; placed = true;
-    } else if (r < 0.62){
+      RMU[i]=HILL.mu;
+      deposit(i, HILL.binOf(0,0,0,d[0],d[1],d[2]), d[0],d[1],d[2]);
+      placed = true;
+    } else if (r < 0.54){ // стекло у подножия
       let d; do { d = randUnit(); } while (d[1] > -0.45 || insideHill(d[0]*R_IN, d[1]*R_IN, d[2]*R_IN));
       P[i3]=d[0]*R_IN; P[i3+1]=d[1]*R_IN; P[i3+2]=d[2]*R_IN;
-      RN[i3]=d[0]; RN[i3+1]=d[1]; RN[i3+2]=d[2]; RMU[i]=0.07; placed = true;
-    } else if (r < 0.86){
+      RMU[i]=0.07;
+      const az = Math.floor(((Math.atan2(d[2],d[0])/(Math.PI*2)) + 0.5)*24) % 24;
+      deposit(i, SHELL_B + az*2 + (d[1] < -0.75 ? 1 : 0), d[0],d[1],d[2]);
+      placed = true;
+    } else if (r < 0.76){ // ярусы ёлки
       const s = TREES[Math.random() < 0.55 ? 0 : 1];
       let d; do { d = randUnit(); } while (d[1] < 0.05);
       P[i3]=s.x+d[0]*s.r; P[i3+1]=s.y+d[1]*s.r; P[i3+2]=s.z+d[2]*s.r;
-      RN[i3]=d[0]; RN[i3+1]=d[1]; RN[i3+2]=d[2]; RMU[i]=s.mu; placed = true;
-    } else {
-      P[i3]  = HOUSE.x + (Math.random()*2-1)*0.15;
-      P[i3+1]= HOUSE.y + HOUSE.hy;
-      P[i3+2]= HOUSE.z + (Math.random()*2-1)*0.13;
-      RN[i3]=0; RN[i3+1]=1; RN[i3+2]=0; RMU[i]=HOUSE.mu; placed = true;
+      RMU[i]=s.mu;
+      deposit(i, s.binOf(0,0,0,d[0],d[1],d[2]), d[0],d[1],d[2]);
+      placed = true;
+    } else if (r < 0.92){ // скаты крыши
+      let lx, lz, m;
+      do { lx = (Math.random()*2-1)*0.8; lz = (Math.random()*2-1)*0.8; m = Math.max(Math.abs(lx), Math.abs(lz)); }
+      while (m > 0.8);
+      lx *= HR.rb; lz *= HR.rb;
+      const surf = HR.y1 - (m*HR.rb/HR.rb)*(HR.y1 - HR.y0);
+      const k = (HR.y1 - HR.y0)/HR.rb;
+      let nlx = 0, nlz = 0;
+      if (Math.abs(lx) >= Math.abs(lz)) nlx = Math.sign(lx)*k; else nlz = Math.sign(lz)*k;
+      const nl = Math.hypot(nlx, 1, nlz); nlx /= nl; const nly = 1/nl; nlz /= nl;
+      const nx = HR_c*nlx + HR_s*nlz, ny = nly, nz = -HR_s*nlx + HR_c*nlz;
+      P[i3]   = HR.x + HR_c*lx + HR_s*lz;
+      P[i3+1] = HR.y + surf;
+      P[i3+2] = HR.z - HR_s*lx + HR_c*lz;
+      RMU[i] = HR.mu;
+      const gx8 = Math.min(7, Math.max(0, ((lx/HR.rb)+1)*4 | 0));
+      const gz8 = Math.min(7, Math.max(0, ((lz/HR.rb)+1)*4 | 0));
+      deposit(i, ROOF_B + gz8*8 + gx8, nx, ny, nz);
+      placed = true;
+    } else if (r < 0.96){ // дымоход
+      P[i3]  = CHIM.x + (Math.random()*2-1)*0.02;
+      P[i3+1]= CHIM.y + CHIM.hy;
+      P[i3+2]= CHIM.z + (Math.random()*2-1)*0.02;
+      RMU[i] = CHIM.mu;
+      deposit(i, CHIM_B + ((Math.random()*4)|0), 0, 1, 0);
+      placed = true;
+    } else { // фонарь и снеговик
+      if (Math.random() < 0.5){
+        P[i3]=LAMP_COL.x+(Math.random()*2-1)*0.02; P[i3+1]=LAMP_COL.y+LAMP_COL.r; P[i3+2]=LAMP_COL.z+(Math.random()*2-1)*0.02;
+        RMU[i]=LAMP_COL.mu; deposit(i, LAMP_B, 0, 1, 0);
+      } else {
+        P[i3]=SMAN_COL.x+(Math.random()*2-1)*0.03; P[i3+1]=SMAN_COL.y+SMAN_COL.r; P[i3+2]=SMAN_COL.z+(Math.random()*2-1)*0.03;
+        RMU[i]=SMAN_COL.mu; deposit(i, SMAN_B, 0, 1, 0);
+      }
+      placed = true;
     }
-    if (placed){ REST[i] = 1; continue; }
+    if (placed) continue;
   }
+  // «в воздухе»
   let d, rr;
   do { d = randUnit(); rr = R_IN*0.94*Math.cbrt(Math.random()); }
   while (d[1]*rr < -0.55 || insideHill(d[0]*rr, d[1]*rr, d[2]*rr));
   P[i3]=d[0]*rr; P[i3+1]=d[1]*rr; P[i3+2]=d[2]*rr;
   V[i3+1] = -0.05;
+}
+
+/* ---- атлас из 4 видов кристаллов (2×2) ---- */
+function flakeAtlas(){
+  const S = 128;
+  const c = document.createElement('canvas'); c.width = c.height = S*2;
+  const g = c.getContext('2d');
+  g.strokeStyle = 'rgba(255,255,255,0.96)';
+  g.lineCap = 'round';
+  g.shadowColor = 'rgba(255,255,255,0.85)';
+  g.shadowBlur = 2.5;
+  const cell = (cx, cy, draw) => { g.save(); g.translate(cx + S/2, cy + S/2); draw(); g.restore(); };
+  const arm = (len, w, br1, br2) => {
+    g.lineWidth = w;
+    g.beginPath(); g.moveTo(0,0); g.lineTo(0,-len); g.stroke();
+    if (br1){ g.beginPath(); g.moveTo(0,-len*0.52); g.lineTo(br1,-len*0.52-br1*0.9); g.moveTo(0,-len*0.52); g.lineTo(-br1,-len*0.52-br1*0.9); g.stroke(); }
+    if (br2){ g.beginPath(); g.moveTo(0,-len*0.78); g.lineTo(br2,-len*0.78-br2*0.85); g.moveTo(0,-len*0.78); g.lineTo(-br2,-len*0.78-br2*0.85); g.stroke(); }
+  };
+  const six = (fn) => { for (let k = 0; k < 6; k++){ g.rotate(Math.PI/3); fn(); } };
+  const hex = (r, w) => {
+    g.lineWidth = w; g.beginPath();
+    for (let k = 0; k < 6; k++){ const a = k*Math.PI/3, x = Math.sin(a)*r, y = -Math.cos(a)*r; k ? g.lineTo(x,y) : g.moveTo(x,y); }
+    g.closePath(); g.stroke();
+  };
+  cell(0, 0,   () => six(() => arm(44, 4.5, 10, 6.5)));                    // классический кристалл
+  cell(S, 0,   () => { six(() => arm(40, 5, 12, 8)); g.lineWidth = 3; g.beginPath(); g.arc(0,0,17,0,6.2832); g.stroke(); });
+  cell(0, S,   () => { hex(38, 4); hex(18, 3); });                         // гексагональная пластинка
+  cell(S, S,   () => {                                                      // пушистая
+    six(() => arm(30, 7, 0, 0));
+    g.fillStyle = 'rgba(255,255,255,0.95)';
+    for (let k = 0; k < 6; k++){ g.rotate(Math.PI/3); g.beginPath(); g.arc(0,-37,3.5,0,6.2832); g.fill(); }
+  });
+  const tex = new THREE.CanvasTexture(c);
+  tex.anisotropy = 4;
+  return tex;
 }
 
 const geo = new THREE.BufferGeometry();
@@ -432,24 +692,26 @@ const szAttr = new THREE.BufferAttribute(new Float32Array(N), 1);
 for (let i = 0; i < N; i++) szAttr.array[i] = 0.017 + Math.pow(Math.random(), 2.2)*0.032;
 geo.setAttribute('aSize', szAttr);
 geo.setAttribute('aPhase', new THREE.BufferAttribute(PH, 1));
+geo.setAttribute('aTex', new THREE.BufferAttribute(TEX, 1));
+const angAttr = new THREE.BufferAttribute(ANG, 1); angAttr.setUsage(THREE.DynamicDrawUsage);
+geo.setAttribute('aAng', angAttr);
 
 const uniforms = {
   uTime:   { value: 0 },
   uProj:   { value: 1000 },
-  uMap:    { value: flakeTexture() },
+  uMap:    { value: flakeAtlas() },
   uWarmPos:{ value: new THREE.Vector3(-0.30, -0.45, 0.05) },
   uWarmFall:{ value: 0.55 },
   uWarmI:  { value: 0.5 }
 };
-
-/* ВНИМАНИЕ: здесь раньше была ошибка компиляции — uWarmI использовался,
-   но не был объявлен среди uniform-ов вершинного шейдера.
-   Теперь каждый uniform, атрибут и varying объявлен явно. */
 const snowMat = new THREE.ShaderMaterial({
   uniforms,
+  alphaToCoverage: false,
   vertexShader: `
     attribute float aSize;
     attribute float aPhase;
+    attribute float aTex;
+    attribute float aAng;
     uniform float uTime;
     uniform float uProj;
     uniform vec3 uWarmPos;
@@ -457,11 +719,15 @@ const snowMat = new THREE.ShaderMaterial({
     uniform float uWarmI;
     varying vec3 vCol;
     varying float vTw;
+    varying float vAng;
+    varying float vTex;
     void main(){
       vec4 mv = modelViewMatrix * vec4(position, 1.0);
       gl_Position = projectionMatrix * mv;
-      gl_PointSize = clamp(aSize * uProj / max(0.1, -mv.z), 1.5, 80.0);
-      vTw = 0.7 + 0.3 * sin(uTime * (0.9 + aPhase * 0.35) + aPhase * 6.2831);
+      gl_PointSize = clamp(aSize * uProj / max(0.1, -mv.z), 1.5, 90.0);
+      vAng = aAng;
+      vTex = aTex;
+      vTw = 0.72 + 0.28 * sin(uTime * (0.9 + aPhase * 0.35) + aPhase * 6.2831);
       float w = 1.0 - clamp(distance(position, uWarmPos) / uWarmFall, 0.0, 1.0);
       vCol = mix(vec3(0.92, 0.95, 1.0), vec3(1.0, 0.83, 0.6), w * uWarmI);
     }`,
@@ -469,29 +735,24 @@ const snowMat = new THREE.ShaderMaterial({
     uniform sampler2D uMap;
     varying vec3 vCol;
     varying float vTw;
+    varying float vAng;
+    varying float vTex;
     void main(){
-      float a = texture2D(uMap, gl_PointCoord).a;
-      if (a < 0.3) discard;
-      gl_FragColor = vec4(vCol * vTw, 1.0);
+      vec2 c = gl_PointCoord - 0.5;
+      float s = sin(vAng), co = cos(vAng);
+      vec2 rc = vec2(c.x*co - c.y*s, c.x*s + c.y*co);
+      vec2 uv = clamp(rc + 0.5, 0.0, 1.0);
+      vec2 off = vec2(mod(vTex, 2.0) * 0.5, 0.5 - floor(vTex * 0.5) * 0.5);
+      float a = texture2D(uMap, off + uv * 0.5).a;
+      if (a < 0.24) discard;
+      gl_FragColor = vec4(vCol * vTw, a);
     }`
 });
 const snow = new THREE.Points(geo, snowMat);
 snow.frustumCulled = false;
 rig.add(snow);
 
-/* ================= фоновая снежная пыль вокруг ================= */
-const NB = 240;
-const BP = new Float32Array(NB*3), BV = new Float32Array(NB), BPH = new Float32Array(NB);
-for (let i = 0; i < NB; i++){
-  BP[i*3]   = (Math.random()-0.5)*11;
-  BP[i*3+1] = (Math.random()-0.5)*6.4;
-  BP[i*3+2] = -2.5 - Math.random()*5;
-  BV[i] = 0.1 + Math.random()*0.28;
-  BPH[i] = Math.random()*6.28;
-}
-const bgGeo = new THREE.BufferGeometry();
-const bgAttr = new THREE.BufferAttribute(BP, 3); bgAttr.setUsage(THREE.DynamicDrawUsage);
-bgGeo.setAttribute('position', bgAttr);
+/* ================= фоновая пыль (два плана) ================= */
 function dotTexture(){
   const c = document.createElement('canvas'); c.width = c.height = 32;
   const g = c.getContext('2d');
@@ -500,14 +761,31 @@ function dotTexture(){
   g.fillStyle = r; g.fillRect(0,0,32,32);
   return new THREE.CanvasTexture(c);
 }
-const bgSnow = new THREE.Points(bgGeo, new THREE.PointsMaterial({
-  size: 0.05, map: dotTexture(), transparent: true, opacity: 0.5,
-  depthWrite: false, color: 0xa8b6cc
-}));
-bgSnow.frustumCulled = false;
-scene.add(bgSnow);
+function makeDust(count, size, opacity, spreadX, spreadY, z0, z1){
+  const bp = new Float32Array(count*3), bv = new Float32Array(count), bph = new Float32Array(count);
+  for (let i = 0; i < count; i++){
+    bp[i*3]   = (Math.random()-0.5)*spreadX;
+    bp[i*3+1] = (Math.random()-0.5)*spreadY;
+    bp[i*3+2] = z0 - Math.random()*(z1 - z0);
+    bv[i] = 0.1 + Math.random()*0.28;
+    bph[i] = Math.random()*6.28;
+  }
+  const g2 = new THREE.BufferGeometry();
+  const attr = new THREE.BufferAttribute(bp, 3); attr.setUsage(THREE.DynamicDrawUsage);
+  g2.setAttribute('position', attr);
+  const pts = new THREE.Points(g2, new THREE.PointsMaterial({
+    size, map: dotTexture(), transparent: true, opacity,
+    depthWrite: false, color: 0xa8b6cc
+  }));
+  pts.frustumCulled = false;
+  scene.add(pts);
+  return { pts, attr, bp, bv, bph, count };
+}
+const dust1 = makeDust(240, 0.05, 0.5, 11, 6.4, -2.5, -7.5);
+const dust2 = makeDust(140, 0.09, 0.22, 12, 7,   -3.5, -8.5);
 
-/* ================= раскладка под экран ================= */
+/* ================= раскладка + пост-обработка ================= */
+let composer = null, bokehPass = null, gradePass = null;
 const camBase = new THREE.Vector3();
 function applyLayout(){
   const w = innerWidth, h = innerHeight;
@@ -521,11 +799,79 @@ function applyLayout(){
   uniforms.uProj.value = renderer.domElement.height / (2*Math.tan(THREE.MathUtils.degToRad(camera.fov*0.5)));
   shadow.position.set(rig.position.x, rig.position.y - 1.235*rig.scale.x, rig.position.z);
   shadow.scale.setScalar(rig.scale.x);
+  if (composer) composer.setSize(w, h);
+  if (gradePass) gradePass.uniforms.uRes.value.set(w, h);
+  if (bokehPass) bokehPass.uniforms['focus'].value = camera.position.distanceTo(rig.position);
 }
 applyLayout();
+
+/* ---- виньетка + зерно ---- */
+const GradeShader = {
+  uniforms: {
+    tDiffuse: { value: null },
+    uTime: { value: 0 },
+    uRes: { value: new THREE.Vector2(1, 1) }
+  },
+  vertexShader: `
+    varying vec2 vUv;
+    void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }`,
+  fragmentShader: `
+    uniform sampler2D tDiffuse;
+    uniform float uTime;
+    uniform vec2 uRes;
+    varying vec2 vUv;
+    float hash(vec2 p){ return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
+    void main(){
+      vec4 col = texture2D(tDiffuse, vUv);
+      float d = distance(vUv, vec2(0.5));
+      col.rgb *= 1.0 - 0.42 * smoothstep(0.42, 0.88, d);                    // виньетка
+      col.rgb *= mix(vec3(1.0), vec3(0.87, 0.93, 1.05), smoothstep(0.32, 0.9, d) * 0.4); // холод к краям
+      col.rgb += (hash(vUv * uRes + fract(uTime) * vec2(17.0, 29.0)) - 0.5) * 0.03; // зерно
+      gl_FragColor = col;
+    }`
+};
+{
+  const rt = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, samples: coarse ? 0 : 4 });
+  composer = new EffectComposer(renderer, rt);
+  composer.setPixelRatio(PR);
+  composer.setSize(innerWidth, innerHeight);
+  composer.addPass(new RenderPass(scene, camera));
+  if (!coarse && innerWidth > 900){   // мягкий DOF: только десктоп; фокус — сам шар, фон тает
+    bokehPass = new BokehPass(scene, camera, { focus: 5.6, aperture: 0.0012, maxblur: 0.0085 });
+    bokehPass.uniforms['focus'].value = camera.position.distanceTo(rig.position);
+    composer.addPass(bokehPass);
+  }
+  composer.addPass(new UnrealBloomPass(new THREE.Vector2(Math.round(innerWidth/2), Math.round(innerHeight/2)), 0.34, 0.5, 0.85));
+  gradePass = new ShaderPass(GradeShader);
+  gradePass.uniforms.uRes.value.set(innerWidth, innerHeight);
+  composer.addPass(gradePass);
+  composer.addPass(new OutputPass());
+}
 addEventListener('resize', applyLayout);
 
-/* ================= состояние взаимодействия ================= */
+/* ---- адаптивное качество: лестница деградаций при просадке FPS ---- */
+let qTier = 0, ftEMA = 16.7, lowAcc = 0;
+function setPR(pr){
+  PR = pr;
+  renderer.setPixelRatio(pr);
+  renderer.setSize(innerWidth, innerHeight);
+  if (composer){ composer.setPixelRatio(pr); composer.setSize(innerWidth, innerHeight); }
+  uniforms.uProj.value = renderer.domElement.height / (2*Math.tan(THREE.MathUtils.degToRad(camera.fov*0.5)));
+}
+function qualityWatch(dt, t){
+  if (t < 3) return;   // прогрев шейдеров — не считаем
+  ftEMA += (dt*1000 - ftEMA) * 0.05;
+  const fps = 1000 / ftEMA;
+  if (fps < 45) lowAcc += dt; else lowAcc = Math.max(0, lowAcc - dt*0.6);
+  if (lowAcc > 2.2 && qTier < 3){
+    qTier++; lowAcc = 0;
+    if (qTier === 1 && bokehPass) bokehPass.enabled = false;       // 1: выключаем DOF
+    else if (qTier === 2) setPR(Math.min(PR, 1.5));                // 2: снижаем разрешение
+    else if (qTier === 3) setPR(1);                                // 3: ещё раз
+  }
+}
+
+/* ================= взаимодействие ================= */
 let shakeEnergy = 0, shakePower = 0, swirl = 0;
 let tPhys = 0;
 function kick(p){ shakeEnergy = Math.min(1.7, Math.max(shakeEnergy, p)); }
@@ -533,33 +879,23 @@ function kick(p){ shakeEnergy = Math.min(1.7, Math.max(shakeEnergy, p)); }
 let basePitch = 0, baseRoll = 0, dragYaw = 0, dragPitch = 0;
 let gyroRoll = 0, gyroPitch = 0;
 let mxT = 0, myT = 0, mxS = 0, myS = 0;
-const coarse = matchMedia('(pointer: coarse)').matches;
-const fine   = matchMedia('(pointer: fine)').matches;
 const _e = new THREE.Euler(), _tq = new THREE.Quaternion(),
       _g = new THREE.Vector3(), _iq = new THREE.Quaternion(),
       _pq = new THREE.Quaternion();
 
-/* ================= датчики телефона ================= */
+/* ---- датчики телефона (без изменений с v3) ---- */
 const sensorLine = document.getElementById('sensorLine');
 const hintText   = document.getElementById('hintText');
 const icMouse    = document.getElementById('icMouse');
 const icPhone    = document.getElementById('icPhone');
 const gate       = document.getElementById('gate');
-
 const needsPerm = typeof DeviceOrientationEvent !== 'undefined'
   && typeof DeviceOrientationEvent.requestPermission === 'function';
-
 const S = {
-  beta: 0, gamma: 0,
-  orientN: 0, motionN: 0,
-  gx: 0, gy: -1, gz: 0,
-  shakeIn: 0,
-  perm: 'unknown',
-  unit: null,
-  grav: { x:0, y:0, z:0 }, gravInit: false,
-  wasLive: false
+  beta: 0, gamma: 0, orientN: 0, motionN: 0,
+  gx: 0, gy: -1, gz: 0, shakeIn: 0, perm: 'unknown', unit: null,
+  grav: { x:0, y:0, z:0 }, gravInit: false, wasLive: false
 };
-
 function screenAngle(){
   if (screen.orientation && typeof screen.orientation.angle === 'number') return screen.orientation.angle;
   if (typeof window.orientation === 'number') return window.orientation;
@@ -579,7 +915,6 @@ function gravityFromTilt(){
   S.gz = dz;
 }
 function sensorsLive(){ return S.orientN > 2; }
-
 function onOrient(e){
   if (e.beta == null && e.gamma == null) return;
   S.orientN++;
@@ -639,14 +974,13 @@ function updateHint(){
   icMouse.style.display = isPhone ? 'none' : '';
   icPhone.style.display = isPhone ? '' : 'none';
   if (sensorsLive())
-    hintText.textContent = 'Наклоняйте телефон — снег оседает к нижнему краю. Встряхните — метель.';
+    hintText.textContent = 'Наклоняйте телефон — снег оседает к нижнему краю. Встряхните — метель; дайте улечься — вырастут сугробы.';
   else if (coarse)
-    hintText.textContent = 'Наклоняйте шар перетаскиванием. Тап по шару или резкий свайп — метель.';
+    hintText.textContent = 'Тяните шар пальцем. Тап по шару или резкий свайп — метель.';
   else
-    hintText.textContent = 'Вращайте шар мышью. Резкий жест — метель; клик по шару — то же самое.';
+    hintText.textContent = 'Клик по шару или резкий жест — метель. Дайте снегу осесть — на крыше и ёлке вырастут сугробы.';
 }
 updateHint();
-
 let lastStatusUpd = 0, lastStatusTxt = null;
 function refreshStatus(){
   const live = sensorsLive();
@@ -658,7 +992,6 @@ function refreshStatus(){
   const now = performance.now();
   if (now - lastStatusUpd < 120) return;
   lastStatusUpd = now;
-
   const show = coarse || live || S.orientN > 0;
   let txt = '';
   if (live){
@@ -666,18 +999,12 @@ function refreshStatus(){
     txt = `датчики: β ${S.beta.toFixed(0)}° · γ ${S.gamma.toFixed(0)}° · крен ${tilt}°`
         + (S.motionN > 0 ? ` · встряска ${Math.min(1, S.shakeIn/2).toFixed(2)}` : ' · тряска: нет данных');
   } else if (show){
-    if (location.protocol === 'file:')
-      txt = 'датчики: страница открыта как файл — нужен http(s)-сервер';
-    else if (window.isSecureContext === false)
-      txt = 'датчики: браузер отдаёт их только по https (или localhost)';
-    else if (needsPerm && S.perm === 'denied')
-      txt = 'датчики: разрешение отклонено — настройки Safari → «Движение и ориентация»';
-    else if (needsPerm && S.perm === 'unknown')
-      txt = 'датчики: ждут разрешения — коснитесь шара или кнопки ниже';
-    else if (S.orientN > 0)
-      txt = 'датчики: наклон есть, тряска не приходит';
-    else
-      txt = 'датчики: событий нет — наклоняйте шар перетаскиванием';
+    if (location.protocol === 'file:') txt = 'датчики: страница открыта как файл — нужен http(s)-сервер';
+    else if (window.isSecureContext === false) txt = 'датчики: браузер отдаёт их только по https (или localhost)';
+    else if (needsPerm && S.perm === 'denied') txt = 'датчики: разрешение отклонено — настройки Safari';
+    else if (needsPerm && S.perm === 'unknown') txt = 'датчики: ждут разрешения — коснитесь шара';
+    else if (S.orientN > 0) txt = 'датчики: наклон есть, тряска не приходит';
+    else txt = 'датчики: событий нет — наклоняйте шар перетаскиванием';
   }
   if (txt !== lastStatusTxt){
     lastStatusTxt = txt;
@@ -728,7 +1055,6 @@ function endDrag(e){
 addEventListener('pointerup', endDrag);
 addEventListener('pointercancel', endDrag);
 
-/* ---- кнопки ---- */
 document.getElementById('shakeBtn').addEventListener('click', () => kick(1.5));
 document.getElementById('gateBtn').addEventListener('click', requestPerms);
 document.getElementById('orderBtn').addEventListener('click', () =>
@@ -744,8 +1070,10 @@ function toast(msg){
 }
 
 /* ================= физика снега ================= */
-const CT = { nx:0, ny:0, nz:0, mu:0, hit:false };
-function mark(nx, ny, nz, mu){ CT.nx = nx; CT.ny = ny; CT.nz = nz; CT.mu = mu; CT.hit = true; }
+const CT = { nx:0, ny:0, nz:0, mu:0, bin:-1, hit:false };
+function mark(nx, ny, nz, mu, bin){
+  CT.nx = nx; CT.ny = ny; CT.nz = nz; CT.mu = mu; CT.bin = bin; CT.hit = true;
+}
 
 function collideShell(i){
   const i3 = i*3;
@@ -758,7 +1086,8 @@ function collideShell(i){
     const vn = V[i3]*nx + V[i3+1]*ny + V[i3+2]*nz;
     if (vn > 0){ const j = vn*1.25; V[i3] -= nx*j; V[i3+1] -= ny*j; V[i3+2] -= nz*j; }
     V[i3]*=0.98; V[i3+1]*=0.98; V[i3+2]*=0.98;
-    mark(nx, ny, nz, 0.07);
+    const az = Math.floor(((Math.atan2(nz,nx)/(Math.PI*2)) + 0.5)*24) % 24;
+    mark(nx, ny, nz, 0.07, SHELL_B + az*2 + (ny < -0.75 ? 1 : 0));
   }
 }
 function collideSphere(i, s){
@@ -772,7 +1101,7 @@ function collideSphere(i, s){
     const vn = V[i3]*nx + V[i3+1]*ny + V[i3+2]*nz;
     if (vn < 0){ const j = -vn*1.15; V[i3] += nx*j; V[i3+1] += ny*j; V[i3+2] += nz*j; }
     V[i3]*=0.985; V[i3+1]*=0.985; V[i3+2]*=0.985;
-    mark(nx, ny, nz, s.mu);
+    mark(nx, ny, nz, s.mu, s.binOf ? s.binOf(dx,dy,dz,nx,ny,nz) : -1);
   }
 }
 function collideBox(i, b){
@@ -787,8 +1116,33 @@ function collideBox(i, b){
     const vn = V[i3]*nx + V[i3+1]*ny + V[i3+2]*nz;
     if (vn < 0){ const j = -vn*1.05; V[i3] += nx*j; V[i3+1] += ny*j; V[i3+2] += nz*j; }
     V[i3]*=0.97; V[i3+1]*=0.97; V[i3+2]*=0.97;
-    mark(nx, ny, nz, b.mu);
+    mark(nx, ny, nz, b.mu, b.binOf ? b.binOf(dx,dy,dz,nx,ny,nz) : -1);
   }
+}
+/* пирамида крыши: скаты с учётом поворота домика */
+function collideRoof(i){
+  const i3 = i*3;
+  const dx = P[i3]-HR.x, dy = P[i3+1]-HR.y, dz = P[i3+2]-HR.z;
+  if (dy < HR.y0 - 0.015 || dy > HR.y1 + 0.015) return;
+  const lx = HR_c*dx - HR_s*dz;
+  const lz = HR_s*dx + HR_c*dz;
+  const m = Math.max(Math.abs(lx), Math.abs(lz));
+  if (m > HR.rb) return;
+  const surf = HR.y1 - (m/HR.rb)*(HR.y1 - HR.y0);
+  if (dy >= surf) return;
+  const k = (HR.y1 - HR.y0)/HR.rb;
+  let nlx = 0, nlz = 0;
+  if (Math.abs(lx) >= Math.abs(lz)) nlx = Math.sign(lx)*k; else nlz = Math.sign(lz)*k;
+  const nl = Math.hypot(nlx, 1, nlz);
+  nlx /= nl; const nly = 1/nl; nlz /= nl;
+  const nx = HR_c*nlx + HR_s*nlz, ny = nly, nz = -HR_s*nlx + HR_c*nlz;
+  P[i3+1] = HR.y + surf;
+  const vn = V[i3]*nx + V[i3+1]*ny + V[i3+2]*nz;
+  if (vn < 0){ const j = -vn*1.1; V[i3] += nx*j; V[i3+1] += ny*j; V[i3+2] += nz*j; }
+  V[i3]*=0.985; V[i3+1]*=0.985; V[i3+2]*=0.985;
+  const gx8 = Math.min(7, Math.max(0, ((lx/HR.rb)+1)*4 | 0));
+  const gz8 = Math.min(7, Math.max(0, ((lz/HR.rb)+1)*4 | 0));
+  mark(nx, ny, nz, HR.mu, ROOF_B + gz8*8 + gx8);
 }
 
 function substep(dt){
@@ -797,10 +1151,13 @@ function substep(dt){
   const gl = Math.hypot(gx, gy, gz) || 1e-6;
   const ux = -gx/gl, uy = -gy/gl, uz = -gz/gl;
   const lift = shakePower * 3.1;
+  const cf = 0.28 + 0.95*Math.min(1, shakePower);   // сила когерентных вихрей
 
   for (let i = 0; i < N; i++){
     const i3 = i*3;
+    ANG[i] += SPD[i] * (REST[i] ? 0.1 : 1) * dt;    // лежащий снег почти не вращается
 
+    /* спящие: просыпаются от тряски или когда наклон превозмогает трение */
     if (REST[i] === 1){
       const nx = RN[i3], ny = RN[i3+1], nz = RN[i3+2];
       const gn = gx*nx + gy*ny + gz*nz;
@@ -808,6 +1165,7 @@ function substep(dt){
       const tl = Math.hypot(tx, ty, tz);
       if (shakePower > WAKE[i] || (gn < -1e-4 && tl > RMU[i]*(-gn))){
         REST[i] = 0;
+        if (FLBIN[i] >= 0){ BINS[FLBIN[i]].c--; FLBIN[i] = -1; }   // освободить слой сугроба
         const k = 0.06/(tl || 1);
         V[i3] += tx*k; V[i3+1] += ty*k; V[i3+2] += tz*k;
       } else continue;
@@ -818,12 +1176,22 @@ function substep(dt){
 
     vx += gx*dt; vy += gy*dt; vz += gz*dt;
 
+    /* метель: подъём + турбулентность */
     if (shakePower > 0.02){
       const k = lift * (0.35 + 0.65*FR[i]) * (0.7 + 0.3*Math.sin(tPhys*(2.1 + PH[i]*3) + PH[i]*6.3));
       vx += ux*k*dt; vy += uy*k*dt; vz += uz*k*dt;
-      const j = shakePower * 0.9 * dt;
+      const j = shakePower * 0.5 * dt;
       vx += (Math.random()-0.5)*j; vy += (Math.random()-0.5)*j; vz += (Math.random()-0.5)*j;
     }
+    /* когерентное вихревое поле (псевдо-curl): соседей кружит одинаково —
+       видны струи и завихрения вместо белого шума */
+    const q1 = Math.sin(px*3.3 + tPhys*1.15 + PH[i]*6.28);
+    const q2 = Math.sin(pz*2.9 - tPhys*0.87 + PH[i]*4.19);
+    const q3 = Math.sin((px + pz)*1.8 + tPhys*0.53 + PH[i]*2.41);
+    vx += (q2 - q3)*cf*dt;
+    vy += (q3 - q1)*cf*0.4*dt;
+    vz += (q1 - q2)*cf*dt;
+
     if (swirl > 0.02){
       const cx = uy*pz - uz*py, cy = uz*px - ux*pz, cz = ux*py - uy*px;
       const cl = Math.hypot(cx, cy, cz);
@@ -832,8 +1200,6 @@ function substep(dt){
         vx += cx*k; vy += cy*k; vz += cz*k;
       }
     }
-    vx += Math.sin(tPhys*1.3 + PH[i]*11.0)*0.22*dt;
-    vz += Math.cos(tPhys*1.05 + PH[i]*7.3)*0.22*dt;
 
     const damp = Math.exp(-DRG[i]*(1 - 0.55*Math.min(1, shakePower))*dt);
     vx *= damp; vy *= damp; vz *= damp;
@@ -844,20 +1210,49 @@ function substep(dt){
     P[i3] = px + vx*dt; P[i3+1] = py + vy*dt; P[i3+2] = pz + vz*dt;
     V[i3] = vx; V[i3+1] = vy; V[i3+2] = vz;
 
-    CT.hit = false;
+    CT.hit = false; CT.bin = -1;
     collideShell(i);
     collideSphere(i, HILL);
     for (let t = 0; t < 4; t++) collideSphere(i, TREES[t]);
-    collideBox(i, HOUSE);
+    collideRoof(i);
+    collideBox(i, CHIM);
+    collideBox(i, WALLS);
+    collideSphere(i, LAMP_COL);
+    collideSphere(i, SMAN_COL);
 
+    /* засыпание: лечь в свою ячейку сугроба; если она заполнена — скатиться */
     if (CT.hit){
       const sp2 = V[i3]*V[i3] + V[i3+1]*V[i3+1] + V[i3+2]*V[i3+2];
       const gn = gx*CT.nx + gy*CT.ny + gz*CT.nz;
       if (sp2 < 0.0011 && gn < -0.55*gl){
-        REST[i] = 1;
-        RN[i3] = CT.nx; RN[i3+1] = CT.ny; RN[i3+2] = CT.nz;
-        RMU[i] = CT.mu;
-        V[i3] = 0; V[i3+1] = 0; V[i3+2] = 0;
+        if (CT.bin >= 0){
+          const b = BINS[CT.bin];
+          if (b.c >= b.cap){
+            /* сугроб полон — снежинка скатывается вниз по склону */
+            const tx = gx - CT.nx*gn, ty = gy - CT.ny*gn, tz = gz - CT.nz*gn;
+            const tl = Math.hypot(tx, ty, tz);
+            if (tl > 1e-4){
+              const k = 0.32/tl;
+              V[i3]   = tx*k + (Math.random()-0.5)*0.06;
+              V[i3+1] = ty*k + (Math.random()-0.5)*0.06;
+              V[i3+2] = tz*k + (Math.random()-0.5)*0.06;
+            }
+          } else {
+            b.c++;
+            FLBIN[i] = CT.bin;
+            const off = 0.0015 + b.d*(b.c - 1);
+            P[i3] += CT.nx*off; P[i3+1] += CT.ny*off; P[i3+2] += CT.nz*off;
+            REST[i] = 1;
+            RN[i3] = CT.nx; RN[i3+1] = CT.ny; RN[i3+2] = CT.nz;
+            RMU[i] = CT.mu;
+            V[i3] = 0; V[i3+1] = 0; V[i3+2] = 0;
+          }
+        } else {
+          REST[i] = 1;
+          RN[i3] = CT.nx; RN[i3+1] = CT.ny; RN[i3+2] = CT.nz;
+          RMU[i] = CT.mu;
+          V[i3] = 0; V[i3+1] = 0; V[i3+2] = 0;
+        }
       }
     }
   }
@@ -865,13 +1260,14 @@ function substep(dt){
 
 /* ================= главный цикл ================= */
 const clock = new THREE.Clock();
-setTimeout(() => kick(1.1), 800);
+setTimeout(() => kick(1.1), 800);   // шар «просыпается» при загрузке
 
 function loop(){
   requestAnimationFrame(loop);
   const dt = Math.min(0.033, clock.getDelta());
   const t = clock.elapsedTime;
 
+  /* ориентация шара */
   mxS += (mxT - mxS)*0.06; myS += (myT - myS)*0.06;
   if (fine && !drag){ basePitch = myS*0.09; baseRoll = mxS*0.11; }
   else { basePitch *= Math.exp(-dt*3); baseRoll *= Math.exp(-dt*3); }
@@ -905,6 +1301,7 @@ function loop(){
   shakePower = Math.max(shakeEnergy, shakePower*Math.exp(-dt*1.5));
   swirl = Math.max(swirl*Math.exp(-dt*1.0), Math.min(1.25, shakePower*0.95));
 
+  /* физика в локальных координатах шара */
   _g.set(0, -1, 0);
   if (live){
     let gx = S.gx, gy = S.gy, gz = S.gz;
@@ -916,25 +1313,35 @@ function loop(){
   _g.multiplyScalar(G).applyQuaternion(_iq.copy(rig.quaternion).invert());
   substep(dt/2); substep(dt/2);
   posAttr.needsUpdate = true;
+  angAttr.needsUpdate = true;
 
-  for (let i = 0; i < NB; i++){
-    const i3 = i*3;
-    BP[i3+1] -= BV[i]*dt;
-    BP[i3]   += Math.sin(t*0.25 + BPH[i])*0.05*dt;
-    if (BP[i3+1] < -3.2){ BP[i3+1] += 6.4; BP[i3] = (Math.random()-0.5)*11; }
+  /* фоновая пыль, два плана */
+  for (const D of [dust1, dust2]){
+    for (let i = 0; i < D.count; i++){
+      const i3 = i*3;
+      D.bp[i3+1] -= D.bv[i]*dt;
+      D.bp[i3]   += Math.sin(t*0.25 + D.bph[i])*0.05*dt;
+      if (D.bp[i3+1] < -3.2){ D.bp[i3+1] += 6.4; D.bp[i3] = (Math.random()-0.5)*11; }
+    }
+    D.attr.needsUpdate = true;
   }
-  bgAttr.needsUpdate = true;
 
+  /* живые огни: окно и фонарь */
   const fl = 0.68 + 0.32*(0.6*Math.sin(t*1.9) + 0.4*Math.sin(t*4.7 + 1.3));
-  winMat.color.setRGB(1.05, 0.55 + 0.28*fl, 0.24 + 0.14*fl);
-  winLight.intensity = 0.5 + 1.0*fl;
+  winMat.color.setRGB(2.2, 1.15*(0.75 + 0.35*fl), 0.5*(0.6 + 0.5*fl));
+  winLight.intensity = 0.6 + 1.1*fl;
   uniforms.uWarmI.value = 0.35 + 0.4*fl;
+  const fl2 = 0.6 + 0.4*Math.sin(t*2.3 + 0.9);
+  lanternLight.intensity = 0.55 + 0.5*fl2;
 
   camera.position.set(camBase.x + Math.sin(t*0.1)*0.03, camBase.y + Math.cos(t*0.13)*0.02, camBase.z);
 
   uniforms.uTime.value = t;
+  if (gradePass) gradePass.uniforms.uTime.value = t;
+  for (const u of sparkU) u.value = t;
   refreshStatus();
-  renderer.render(scene, camera);
+  composer.render();
+  qualityWatch(dt, t);
 }
 loop();
 </script>
