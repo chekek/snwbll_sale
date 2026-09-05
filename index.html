@@ -1,0 +1,923 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Тихий вечер — снежный шар ручной работы</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant:ital,wght@1,500;1,600&family=Golos+Text:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0a0e16; --ink:#f2ede2; --dim:#9aa3b2; --brass:#c8a25c; --brass-hi:#e6c37e;
+    --line:rgba(242,237,226,.16);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{
+    background:var(--bg); color:var(--ink);
+    font-family:"Golos Text",sans-serif;
+    overflow:hidden; -webkit-font-smoothing:antialiased;
+  }
+  #scene{position:fixed;inset:0;display:block;cursor:grab;touch-action:none}
+  #scene.grabbing{cursor:grabbing}
+
+  /* ---------- шапка ---------- */
+  header{
+    position:fixed;top:0;left:0;right:0;z-index:5;
+    display:flex;justify-content:space-between;align-items:baseline;
+    padding:26px clamp(20px,4vw,44px);pointer-events:none;
+  }
+  .brand{font-size:12px;letter-spacing:.34em;text-transform:uppercase;font-weight:600}
+  .brand em{font-style:normal;color:var(--brass)}
+  .note{font-size:11px;letter-spacing:.22em;text-transform:uppercase;color:var(--dim)}
+
+  /* ---------- левая колонка ---------- */
+  main{
+    position:fixed;z-index:4;left:clamp(22px,7vw,120px);
+    top:50%;transform:translateY(-50%);max-width:520px;pointer-events:none;
+  }
+  .kicker{
+    display:flex;align-items:center;gap:14px;margin-bottom:26px;
+    font-size:11px;letter-spacing:.3em;text-transform:uppercase;color:var(--brass);
+  }
+  .kicker::before{content:"";width:34px;height:1px;background:var(--brass);opacity:.7}
+  h1{
+    font-family:Cormorant,serif;font-style:italic;font-weight:600;
+    font-size:clamp(52px,7.6vw,104px);line-height:.97;margin-bottom:28px;
+  }
+  .lead{font-size:15.5px;line-height:1.7;color:#b6bdc9;max-width:44ch;margin-bottom:30px}
+  .specs{
+    font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim);
+    border-top:1px solid var(--line);padding-top:18px;margin-bottom:34px;
+  }
+  .cta{display:flex;gap:12px;flex-wrap:wrap;pointer-events:auto}
+  .btn{
+    font:600 14.5px/1 "Golos Text",sans-serif;border-radius:3px;cursor:pointer;
+    padding:16px 24px;display:inline-flex;align-items:center;gap:9px;
+    transition:transform .22s ease, background .22s ease, border-color .22s ease, color .22s ease;
+    border:1px solid transparent;
+  }
+  .btn:active{transform:scale(.97)}
+  .btn:focus-visible{outline:1px solid var(--brass);outline-offset:3px}
+  .primary{background:var(--brass);color:#191207}
+  .primary:hover{background:var(--brass-hi);transform:translateY(-2px)}
+  .ghost{background:transparent;border-color:var(--line);color:var(--ink)}
+  .ghost:hover{border-color:var(--brass);color:var(--brass-hi);transform:translateY(-2px)}
+  .ghost svg{opacity:.8}
+  .foot{margin-top:32px;font-family:Cormorant,serif;font-style:italic;font-size:16px;color:var(--dim);opacity:.9}
+
+  /* ---------- подсказка + статус датчиков ---------- */
+  .hint{
+    position:fixed;z-index:4;right:clamp(20px,4vw,44px);
+    bottom:calc(22px + env(safe-area-inset-bottom));
+    display:flex;align-items:flex-start;gap:10px;color:var(--dim);
+    font-size:12px;letter-spacing:.04em;max-width:340px;text-align:left;
+  }
+  .hint svg{flex:none;opacity:.75;margin-top:1px}
+  .hintcol{display:flex;flex-direction:column;gap:5px}
+  .sensor-line{
+    font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+    font-size:10.5px;letter-spacing:.05em;color:#78828f;
+  }
+  .sensor-line.ok{color:#8fbf95}
+  .sensor-line.warn{color:#c9a55e}
+
+  /* ---------- запрос датчиков (iOS) ---------- */
+  .gate{
+    position:fixed;z-index:10;left:50%;bottom:calc(26px + env(safe-area-inset-bottom));
+    transform:translate(-50%,150%);width:min(400px,calc(100vw - 40px));
+    background:#10161f;border:1px solid var(--line);border-radius:6px;padding:18px 22px;
+    transition:transform .5s cubic-bezier(.2,.8,.2,1);
+  }
+  .gate.on{transform:translate(-50%,0)}
+  .gate p{font-size:13.5px;color:#c6ccd6;line-height:1.55;margin-bottom:14px}
+
+  /* ---------- тост ---------- */
+  .toast{
+    position:fixed;z-index:20;left:50%;bottom:calc(70px + env(safe-area-inset-bottom));
+    transform:translate(-50%,16px);opacity:0;pointer-events:none;
+    background:#10161f;border:1px solid var(--line);border-left:2px solid var(--brass);
+    border-radius:4px;padding:14px 20px;font-size:13.5px;max-width:min(420px,calc(100vw - 40px));
+    transition:opacity .35s ease, transform .35s ease;
+  }
+  .toast.on{opacity:1;transform:translate(-50%,0)}
+
+  /* появление текста */
+  .rise{opacity:0;transform:translateY(18px);animation:rise .8s cubic-bezier(.16,.7,.2,1) forwards}
+  @keyframes rise{to{opacity:1;transform:none}}
+
+  @media (max-width:760px){
+    main{top:84px;transform:none;left:22px;right:22px;max-width:none}
+    h1{font-size:clamp(46px,13vw,72px)}
+    .lead{font-size:14px}
+    .note{display:none}
+    header{padding:20px 22px}
+    .hint{left:50%;right:auto;transform:translateX(-50%);max-width:320px;text-align:center}
+  }
+  @media (max-width:760px) and (max-height:640px){
+    h1{font-size:40px;margin-bottom:16px}
+    .lead{font-size:13px;margin-bottom:18px}
+    .kicker{margin-bottom:16px}
+    .specs{margin-bottom:20px;padding-top:12px}
+    .foot{display:none}
+  }
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+
+<canvas id="scene"></canvas>
+
+<header>
+  <div class="brand">Тихий <em>вечер</em></div>
+  <div class="note">ручная работа · санкт-петербург</div>
+</header>
+
+<main>
+  <div class="kicker rise">Снежный шар № 4 — «Тихий вечер»</div>
+  <h1 class="rise" style="animation-delay:.08s">Внутри<br>идёт снег.</h1>
+  <p class="lead rise" style="animation-delay:.16s">
+    Стеклянный шар ручной выдувки: домик, ёлка и окно, в котором всегда горит свет.
+    Наклоните его — и снег послушно осядет к нижнему краю. Встряхните — снова метель.
+    Как в детстве, только теперь он стоит на вашем столе.
+  </p>
+  <div class="specs rise" style="animation-delay:.22s">Выдувное стекло · высота 16 см · латунная база · вода с глицерином</div>
+  <div class="cta rise" style="animation-delay:.28s">
+    <button class="btn primary" id="orderBtn">Заказать — 4 900 ₽</button>
+    <button class="btn ghost" id="shakeBtn" aria-label="Встряхнуть шар">
+      <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
+        <path d="M12 2v20M3.3 7l17.4 10M20.7 7L3.3 17M12 2l-2.5 2.5M12 2l2.5 2.5M12 22l-2.5-2.5M12 22l2.5-2.5"/>
+      </svg>
+      Встряхнуть шар
+    </button>
+  </div>
+  <div class="foot rise" style="animation-delay:.34s">Внутри <span id="flakeCount">750</span> снежинок — и ни одна не падает одинаково.</div>
+</main>
+
+<div class="hint" id="hint">
+  <svg id="icMouse" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M3 12a9 9 0 1 0 3.2-6.9"/><path d="M3 4v5h5"/>
+  </svg>
+  <svg id="icPhone" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" style="display:none">
+    <rect x="7" y="2" width="10" height="20" rx="2.5"/><path d="M11 18.5h2"/>
+  </svg>
+  <div class="hintcol">
+    <span id="hintText">Вращайте шар мышью. Резкий жест — метель; клик по шару — то же самое.</span>
+    <span id="sensorLine" class="sensor-line" hidden></span>
+  </div>
+</div>
+
+<div class="gate" id="gate">
+  <p>Чтобы шар чувствовал наклон и встряхивание, нужен доступ к датчикам движения устройства.</p>
+  <button class="btn primary" id="gateBtn" style="pointer-events:auto">Включить датчики</button>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script type="module">
+import * as THREE from 'three';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+
+/* ================= константы ================= */
+const N     = 750;    // снежинок внутри шара
+const R_IN  = 0.965;  // внутренний радиус стекла (юниты: стекло = 1)
+const G     = 0.62;   // «гравитация» в масштабе шара
+
+document.getElementById('flakeCount').textContent = N;
+
+/* ================= сцена ================= */
+const canvas   = document.getElementById('scene');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias:true, powerPreference:'high-performance' });
+renderer.setPixelRatio(Math.min(2, window.devicePixelRatio));
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0a0e16);
+
+const camera = new THREE.PerspectiveCamera(34, 1, 0.1, 60);
+
+const pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+pmrem.dispose();
+
+scene.add(new THREE.HemisphereLight(0x8fb4dd, 0x1a1410, 0.35));
+const key = new THREE.DirectionalLight(0xffe7c4, 1.4); key.position.set(2.4, 3.2, 2.2); scene.add(key);
+const rim = new THREE.DirectionalLight(0xb9d0ff, 0.8); rim.position.set(-3, 1.6, -2.6); scene.add(rim);
+
+/* ================= сам шар ================= */
+const rig = new THREE.Group();   // rig наклоняется жестами/гравитацией телефона
+scene.add(rig);
+
+/* --- стекло с преломлением --- */
+const glass = new THREE.Mesh(
+  new THREE.SphereGeometry(1, 64, 48),
+  new THREE.MeshPhysicalMaterial({
+    transmission: 1, thickness: 0.55, ior: 1.45,
+    roughness: 0.07, metalness: 0,
+    clearcoat: 1, clearcoatRoughness: 0.08,
+    envMapIntensity: 1.0
+  })
+);
+rig.add(glass);
+
+/* --- снежный холм (его же сфера — физический коллайдер) --- */
+const HILL = { x:0, y:-1.02, z:0, r:0.578, mu:0.55 };
+const hillMesh = new THREE.Mesh(
+  new THREE.SphereGeometry(0.56, 48, 32),
+  new THREE.MeshStandardMaterial({ color:0xe9eef5, roughness:0.92 })
+);
+hillMesh.position.set(0, -1.02, 0);
+rig.add(hillMesh);
+
+/* --- домик --- */
+const house = new THREE.Group();
+house.position.set(-0.34, -0.60, -0.08);
+house.rotation.y = 0.38;
+{
+  const wallMat = new THREE.MeshStandardMaterial({ color:0x5d4433, roughness:0.85 });
+  const darkMat = new THREE.MeshStandardMaterial({ color:0x2c2320, roughness:0.9, flatShading:true });
+  const walls = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.24, 0.24), wallMat);
+  walls.position.y = 0.10; house.add(walls);
+  const roof = new THREE.Mesh(new THREE.CylinderGeometry(0, 0.27, 0.18, 4), darkMat);
+  roof.rotation.y = Math.PI/4; roof.position.y = 0.21; house.add(roof);
+  const chimney = new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.12, 0.055), wallMat);
+  chimney.position.set(0.075, 0.30, -0.05); house.add(chimney);
+  const door = new THREE.Mesh(new THREE.PlaneGeometry(0.09, 0.15), new THREE.MeshStandardMaterial({ color:0x1c130d, roughness:0.9 }));
+  door.position.set(-0.075, 0.075, 0.1215); house.add(door);
+  const frame = new THREE.Mesh(new THREE.PlaneGeometry(0.122, 0.106), new THREE.MeshStandardMaterial({ color:0x241a12, roughness:0.8 }));
+  frame.position.set(0.055, 0.115, 0.1205); house.add(frame);
+}
+const winMat = new THREE.MeshBasicMaterial({ color:0xffc37a, toneMapped:false }); // тёплое окно
+{
+  const win = new THREE.Mesh(new THREE.PlaneGeometry(0.1, 0.085), winMat);
+  win.position.set(0.055, 0.115, 0.1235); house.add(win);
+  const mullMat = new THREE.MeshBasicMaterial({ color:0x241a12, toneMapped:false });
+  const v = new THREE.Mesh(new THREE.PlaneGeometry(0.009, 0.085), mullMat); v.position.set(0.055, 0.115, 0.1245); house.add(v);
+  const h = new THREE.Mesh(new THREE.PlaneGeometry(0.1, 0.009), mullMat);   h.position.set(0.055, 0.115, 0.1245); house.add(h);
+}
+rig.add(house);
+const winLight = new THREE.PointLight(0xffb264, 1.1, 1.2, 2);
+winLight.position.set(-0.30, -0.44, 0.10);
+rig.add(winLight);
+
+/* --- ёлка --- */
+const tree = new THREE.Group();
+tree.position.set(0.36, -0.60, 0.10);
+{
+  const green = new THREE.MeshStandardMaterial({ color:0x1f4636, roughness:0.85 });
+  const snow  = new THREE.MeshStandardMaterial({ color:0xeef2f6, roughness:0.95 });
+  const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.028, 0.04, 0.12, 8),
+    new THREE.MeshStandardMaterial({ color:0x4a3323, roughness:0.9 }));
+  trunk.position.y = 0.04; tree.add(trunk);
+  const tiers = [[0.17,0.22,0.20],[0.125,0.19,0.36],[0.085,0.16,0.49]];
+  for (const [r,h,y] of tiers){
+    const c = new THREE.Mesh(new THREE.ConeGeometry(r, h, 10), green); c.position.y = y; tree.add(c);
+    const s = new THREE.Mesh(new THREE.ConeGeometry(r*0.72, h*0.32, 10), snow); s.position.y = y + h*0.38; tree.add(s);
+  }
+}
+rig.add(tree);
+
+/* --- латунная база --- */
+{
+  const brass = new THREE.MeshStandardMaterial({ color:0xb08a4c, metalness:1.0, roughness:0.34, envMapIntensity:1.15 });
+  const wood  = new THREE.MeshStandardMaterial({ color:0x2a1f18, roughness:0.7 });
+  const collar = new THREE.Mesh(new THREE.TorusGeometry(0.60, 0.05, 24, 64), brass);
+  collar.rotation.x = Math.PI/2; collar.position.y = -0.80; rig.add(collar);
+  const belt = new THREE.Mesh(new THREE.CylinderGeometry(0.58, 0.63, 0.30, 64), brass);
+  belt.position.y = -0.97; rig.add(belt);
+  const insert = new THREE.Mesh(new THREE.CylinderGeometry(0.615, 0.625, 0.07, 64), wood);
+  insert.position.y = -0.87; rig.add(insert);
+  const foot = new THREE.Mesh(new THREE.CylinderGeometry(0.63, 0.66, 0.06, 64), brass);
+  foot.position.y = -1.15; rig.add(foot);
+}
+
+/* --- мягкая тень под шаром (мировая) --- */
+const shadow = (() => {
+  const c = document.createElement('canvas'); c.width = c.height = 128;
+  const g = c.getContext('2d');
+  const r = g.createRadialGradient(64,64,0,64,64,64);
+  r.addColorStop(0,'rgba(0,0,0,0.55)'); r.addColorStop(0.55,'rgba(0,0,0,0.28)'); r.addColorStop(1,'rgba(0,0,0,0)');
+  g.fillStyle = r; g.fillRect(0,0,128,128);
+  const m = new THREE.Mesh(
+    new THREE.PlaneGeometry(2.7, 2.7),
+    new THREE.MeshBasicMaterial({ map:new THREE.CanvasTexture(c), transparent:true, depthWrite:false, opacity:0.8 })
+  );
+  m.rotation.x = -Math.PI/2;
+  scene.add(m);
+  return m;
+})();
+
+/* ================= снежинки внутри шара ================= */
+function flakeTexture(){
+  const c = document.createElement('canvas'); c.width = c.height = 64;
+  const g = c.getContext('2d');
+  g.translate(32, 32);
+  g.strokeStyle = 'rgba(255,255,255,0.95)'; g.lineWidth = 3.1; g.lineCap = 'round';
+  for (let k = 0; k < 6; k++){
+    g.rotate(Math.PI/3);
+    g.beginPath(); g.moveTo(0,0); g.lineTo(0,-24); g.stroke();
+    g.beginPath(); g.moveTo(0,-13); g.lineTo(6.5,-19); g.moveTo(0,-13); g.lineTo(-6.5,-19); g.stroke();
+    g.beginPath(); g.moveTo(0,-19.5); g.lineTo(4.5,-23.5); g.moveTo(0,-19.5); g.lineTo(-4.5,-23.5); g.stroke();
+  }
+  return new THREE.CanvasTexture(c);
+}
+
+const P  = new Float32Array(N*3);      // позиции (локальные координаты шара)
+const V  = new Float32Array(N*3);      // скорости
+const RN = new Float32Array(N*3);      // нормаль опоры у «спящих»
+const PH = new Float32Array(N);        // фаза мерцания
+const FR = new Float32Array(N);        // индивидуальный множитель
+const DRG= new Float32Array(N);        // вязкость (мелкие падают медленнее)
+const WAKE = new Float32Array(N);      // личный порог «просыпания» от тряски
+const RMU  = new Float32Array(N);      // трение поверхности, на которой лежит
+const REST = new Uint8Array(N);        // 1 = лежит
+
+const TREES = [
+  { x:0.36, y:-0.38, z:0.10, r:0.170, mu:0.5 },
+  { x:0.36, y:-0.22, z:0.10, r:0.120, mu:0.5 },
+  { x:0.36, y:-0.09, z:0.10, r:0.070, mu:0.5 },
+  { x:0.36, y:-0.03, z:0.10, r:0.040, mu:0.5 }
+];
+const HOUSE = { x:-0.34, y:-0.46, z:-0.08, hx:0.200, hy:0.180, hz:0.180, mu:0.55 };
+
+function randUnit(){
+  let x,y,z,l;
+  do { x = Math.random()*2-1; y = Math.random()*2-1; z = Math.random()*2-1; l = Math.hypot(x,y,z); }
+  while (l > 1 || l < 0.001);
+  return [x/l, y/l, z/l];
+}
+function insideHill(x,y,z){ return Math.hypot(x-HILL.x, y-HILL.y, z-HILL.z) < HILL.r + 0.01; }
+
+for (let i = 0; i < N; i++){
+  const i3 = i*3;
+  PH[i]  = Math.random();
+  FR[i]  = Math.random();
+  DRG[i] = 1.6 + Math.random()*0.6;
+  WAKE[i]= 0.22 + Math.random()*0.5;
+  const lying = Math.random() < 0.45;
+  let placed = false;
+  if (lying){
+    const r = Math.random();
+    if (r < 0.40){ // холм
+      let d; do { d = randUnit(); } while (d[1] < 0.42);
+      P[i3]=HILL.x+d[0]*HILL.r; P[i3+1]=HILL.y+d[1]*HILL.r; P[i3+2]=HILL.z+d[2]*HILL.r;
+      RN[i3]=d[0]; RN[i3+1]=d[1]; RN[i3+2]=d[2]; RMU[i]=HILL.mu; placed = true;
+    } else if (r < 0.62){ // стеклянное дно у подножия
+      let d; do { d = randUnit(); } while (d[1] > -0.45 || insideHill(d[0]*R_IN, d[1]*R_IN, d[2]*R_IN));
+      P[i3]=d[0]*R_IN; P[i3+1]=d[1]*R_IN; P[i3+2]=d[2]*R_IN;
+      RN[i3]=d[0]; RN[i3+1]=d[1]; RN[i3+2]=d[2]; RMU[i]=0.07; placed = true;
+    } else if (r < 0.86){ // ёлка
+      const s = TREES[Math.random() < 0.55 ? 0 : 1];
+      let d; do { d = randUnit(); } while (d[1] < 0.05);
+      P[i3]=s.x+d[0]*s.r; P[i3+1]=s.y+d[1]*s.r; P[i3+2]=s.z+d[2]*s.r;
+      RN[i3]=d[0]; RN[i3+1]=d[1]; RN[i3+2]=d[2]; RMU[i]=s.mu; placed = true;
+    } else { // крыша домика
+      P[i3]  = HOUSE.x + (Math.random()*2-1)*0.15;
+      P[i3+1]= HOUSE.y + HOUSE.hy;
+      P[i3+2]= HOUSE.z + (Math.random()*2-1)*0.13;
+      RN[i3]=0; RN[i3+1]=1; RN[i3+2]=0; RMU[i]=HOUSE.mu; placed = true;
+    }
+    if (placed){ REST[i] = 1; continue; }
+  }
+  let d, rr;
+  do { d = randUnit(); rr = R_IN*0.94*Math.cbrt(Math.random()); }
+  while (d[1]*rr < -0.55 || insideHill(d[0]*rr, d[1]*rr, d[2]*rr));
+  P[i3]=d[0]*rr; P[i3+1]=d[1]*rr; P[i3+2]=d[2]*rr;
+  V[i3+1] = -0.05;
+}
+
+const geo = new THREE.BufferGeometry();
+const posAttr = new THREE.BufferAttribute(P, 3); posAttr.setUsage(THREE.DynamicDrawUsage);
+geo.setAttribute('position', posAttr);
+const szAttr = new THREE.BufferAttribute(new Float32Array(N), 1);
+for (let i = 0; i < N; i++) szAttr.array[i] = 0.017 + Math.pow(Math.random(), 2.2)*0.032;
+geo.setAttribute('aSize', szAttr);
+geo.setAttribute('aPhase', new THREE.BufferAttribute(PH, 1));
+
+const uniforms = {
+  uTime:   { value: 0 },
+  uProj:   { value: 1000 },
+  uMap:    { value: flakeTexture() },
+  uWarmPos:{ value: new THREE.Vector3(-0.30, -0.45, 0.05) },
+  uWarmFall:{ value: 0.55 },
+  uWarmI:  { value: 0.5 }
+};
+const snowMat = new THREE.ShaderMaterial({
+  uniforms,
+  vertexShader: `
+    attribute float aSize;
+    attribute float aPhase;
+    uniform float uTime, uProj;
+    uniform vec3 uWarmPos;
+    uniform float uWarmFall;
+    varying vec3 vCol;
+    varying float vTw;
+    void main(){
+      vec4 mv = modelViewMatrix * vec4(position, 1.0);
+      gl_Position = projectionMatrix * mv;
+      gl_PointSize = clamp(aSize * uProj / max(0.1, -mv.z), 1.5, 80.0);
+      vTw = 0.7 + 0.3 * sin(uTime * (0.9 + aPhase * 0.35) + aPhase * 6.2831);
+      float w = 1.0 - clamp(distance(position, uWarmPos) / uWarmFall, 0.0, 1.0);
+      vCol = mix(vec3(0.92, 0.95, 1.0), vec3(1.0, 0.83, 0.6), w * uWarmI);
+    }`,
+  fragmentShader: `
+    uniform sampler2D uMap;
+    varying vec3 vCol;
+    varying float vTw;
+    void main(){
+      float a = texture2D(uMap, gl_PointCoord).a;
+      if (a < 0.3) discard;
+      gl_FragColor = vec4(vCol * vTw, 1.0);
+    }`
+});
+const snow = new THREE.Points(geo, snowMat);
+snow.frustumCulled = false;
+rig.add(snow);
+
+/* ================= фоновая снежная пыль вокруг ================= */
+const NB = 240;
+const BP = new Float32Array(NB*3), BV = new Float32Array(NB), BPH = new Float32Array(NB);
+for (let i = 0; i < NB; i++){
+  BP[i*3]   = (Math.random()-0.5)*11;
+  BP[i*3+1] = (Math.random()-0.5)*6.4;
+  BP[i*3+2] = -2.5 - Math.random()*5;
+  BV[i] = 0.1 + Math.random()*0.28;
+  BPH[i] = Math.random()*6.28;
+}
+const bgGeo = new THREE.BufferGeometry();
+const bgAttr = new THREE.BufferAttribute(BP, 3); bgAttr.setUsage(THREE.DynamicDrawUsage);
+bgGeo.setAttribute('position', bgAttr);
+function dotTexture(){
+  const c = document.createElement('canvas'); c.width = c.height = 32;
+  const g = c.getContext('2d');
+  const r = g.createRadialGradient(16,16,0,16,16,15);
+  r.addColorStop(0,'rgba(255,255,255,.9)'); r.addColorStop(0.5,'rgba(255,255,255,.32)'); r.addColorStop(1,'rgba(255,255,255,0)');
+  g.fillStyle = r; g.fillRect(0,0,32,32);
+  return new THREE.CanvasTexture(c);
+}
+const bgSnow = new THREE.Points(bgGeo, new THREE.PointsMaterial({
+  size: 0.05, map: dotTexture(), transparent: true, opacity: 0.5,
+  depthWrite: false, color: 0xa8b6cc
+}));
+bgSnow.frustumCulled = false;
+scene.add(bgSnow);
+
+/* ================= раскладка под экран ================= */
+const camBase = new THREE.Vector3();
+function applyLayout(){
+  const w = innerWidth, h = innerHeight;
+  renderer.setSize(w, h);
+  camera.aspect = w/h;
+  const wide = camera.aspect >= 0.95;
+  if (wide){ rig.position.set(1.02, -0.08, 0); rig.scale.setScalar(1);   camera.position.set(0, 0.32, 5.5); camera.lookAt(0.55, -0.12, 0); }
+  else     { rig.position.set(0, -1.0, 0);     rig.scale.setScalar(0.8); camera.position.set(0, 0.32, 6.7); camera.lookAt(0, -0.32, 0); }
+  camBase.copy(camera.position);
+  camera.updateProjectionMatrix();
+  uniforms.uProj.value = renderer.domElement.height / (2*Math.tan(THREE.MathUtils.degToRad(camera.fov*0.5)));
+  shadow.position.set(rig.position.x, rig.position.y - 1.235*rig.scale.x, rig.position.z);
+  shadow.scale.setScalar(rig.scale.x);
+}
+applyLayout();
+addEventListener('resize', applyLayout);
+
+/* ================= состояние взаимодействия ================= */
+let shakeEnergy = 0, shakePower = 0, swirl = 0;
+let tPhys = 0;
+function kick(p){ shakeEnergy = Math.min(1.7, Math.max(shakeEnergy, p)); }
+
+let basePitch = 0, baseRoll = 0, dragYaw = 0, dragPitch = 0;
+let gyroRoll = 0, gyroPitch = 0;   // лёгкий визуальный крен шара от реальной гравитации
+let mxT = 0, myT = 0, mxS = 0, myS = 0;
+const coarse = matchMedia('(pointer: coarse)').matches;
+const fine   = matchMedia('(pointer: fine)').matches;
+const _e = new THREE.Euler(), _tq = new THREE.Quaternion(),
+      _g = new THREE.Vector3(), _iq = new THREE.Quaternion(),
+      _pq = new THREE.Quaternion();
+
+/* ================= датчики телефона ================= */
+/* Состояние датчиков + честная диагностика:
+   браузеры отдают deviceorientation/devicemotion только на «защищённых»
+   страницах (https или localhost); на iOS дополнительно нужно разрешение. */
+const sensorLine = document.getElementById('sensorLine');
+const hintText   = document.getElementById('hintText');
+const icMouse    = document.getElementById('icMouse');
+const icPhone    = document.getElementById('icPhone');
+const gate       = document.getElementById('gate');
+
+const needsPerm = typeof DeviceOrientationEvent !== 'undefined'
+  && typeof DeviceOrientationEvent.requestPermission === 'function';
+
+const S = {
+  beta: 0, gamma: 0,
+  orientN: 0, motionN: 0,
+  gx: 0, gy: -1, gz: 0,        // гравитация в координатах экрана (x вправо, y вверх, z на зрителя)
+  shakeIn: 0,                  // энергия тряски, накопленная датчиками
+  perm: 'unknown',             // unknown / granted / denied (iOS)
+  unit: null,                  // автодетект единиц: 1 = м/с², 9.81 = g
+  grav: { x:0, y:0, z:0 }, gravInit: false,
+  wasLive: false
+};
+
+function screenAngle(){
+  if (screen.orientation && typeof screen.orientation.angle === 'number') return screen.orientation.angle;
+  if (typeof window.orientation === 'number') return window.orientation;
+  return 0;
+}
+/* Точная проекция гравитации в систему экрана из beta/gamma (не зависит от alpha) */
+function gravityFromTilt(){
+  if (S.orientN === 0) return;
+  const b = THREE.MathUtils.degToRad(S.beta), g = THREE.MathUtils.degToRad(S.gamma);
+  const dx =  Math.cos(b) * Math.sin(g);
+  const dy = -Math.sin(b);
+  const dz = -Math.cos(b) * Math.cos(g);
+  const a = ((Math.round(screenAngle()) % 360) + 360) % 360;
+  if (a === 90)      { S.gx = -dy; S.gy =  dx; }   // ландшафт: устройство повёрнуто против часовой
+  else if (a === 180){ S.gx = -dx; S.gy = -dy; }
+  else if (a === 270){ S.gx =  dy; S.gy = -dx; }
+  else               { S.gx =  dx; S.gy =  dy; }
+  S.gz = dz;
+}
+function sensorsLive(){ return S.orientN > 2; }
+
+function onOrient(e){
+  if (e.beta == null && e.gamma == null) return;
+  S.orientN++;
+  if (e.beta  != null) S.beta  = e.beta;
+  if (e.gamma != null) S.gamma = e.gamma;
+  gravityFromTilt();
+  refreshStatus();
+}
+function onMotion(e){
+  const a = e.accelerationIncludingGravity || e.acceleration;
+  if (!a || a.x == null) return;
+  S.motionN++;
+  let ax = a.x, ay = a.y, az = a.z;
+  if (S.unit === null){
+    const m = Math.hypot(ax, ay, az);
+    S.unit = (m > 0.4 && m < 2.5) ? 9.81 : 1;   // некоторые платформы отдают g вместо м/с²
+  }
+  ax *= S.unit; ay *= S.unit; az *= S.unit;
+  if (!S.gravInit){ S.grav.x = ax; S.grav.y = ay; S.grav.z = az; S.gravInit = true; }
+  const k = 0.07;   // сглаженная оценка «покоя»
+  S.grav.x += (ax - S.grav.x)*k; S.grav.y += (ay - S.grav.y)*k; S.grav.z += (az - S.grav.z)*k;
+  const d = Math.hypot(ax - S.grav.x, ay - S.grav.y, az - S.grav.z);
+  if (d > 2.8) S.shakeIn = Math.min(2.6, S.shakeIn + (d - 2.8) * 0.06);
+  const r = e.rotationRate;   // тряска и по угловой скорости — надёжнее на быстрых рывках
+  if (r && r.alpha != null){
+    const w = Math.hypot(r.alpha || 0, r.beta || 0, r.gamma || 0);
+    if (w > 180) S.shakeIn = Math.min(2.6, S.shakeIn + (w - 180) * 0.0011);
+  }
+}
+addEventListener('deviceorientation', onOrient);
+addEventListener('devicemotion', onMotion);
+if (screen.orientation && screen.orientation.addEventListener)
+  screen.orientation.addEventListener('change', () => { gravityFromTilt(); refreshStatus(); });
+addEventListener('orientationchange', () => setTimeout(gravityFromTilt, 90));
+
+/* разрешение на iOS: оба запроса обязаны уйти синхронно внутри одного жеста,
+   иначе второй (акселерометр) получает отказ — в прошлом варианте был именно этот баг */
+let permAsked = false;
+async function requestPerms(){
+  if (!needsPerm || permAsked) return;
+  permAsked = true;
+  const p1 = DeviceOrientationEvent.requestPermission();
+  const p2 = (typeof DeviceMotionEvent !== 'undefined' && DeviceMotionEvent.requestPermission)
+    ? DeviceMotionEvent.requestPermission() : null;
+  let r1 = 'granted', r2 = 'granted';
+  try { r1 = await p1; } catch { r1 = 'denied'; }
+  if (p2){ try { r2 = await p2; } catch { r2 = 'denied'; } }
+  S.perm = (r1 === 'granted' && r2 === 'granted') ? 'granted' : 'denied';
+  if (S.perm !== 'granted')
+    toast('Разрешение не выдано: наклон и тряску заменит перетаскивание пальцем.');
+  gate.classList.remove('on');
+  refreshStatus();
+}
+if (needsPerm && coarse)
+  setTimeout(() => { if (S.perm === 'unknown') gate.classList.add('on'); }, 600);
+
+/* ---- подсказка и строка статуса датчиков ---- */
+function updateHint(){
+  const isPhone = sensorsLive() || coarse;
+  icMouse.style.display = isPhone ? 'none' : '';
+  icPhone.style.display = isPhone ? '' : 'none';
+  if (sensorsLive())
+    hintText.textContent = 'Наклоняйте телефон — снег оседает к нижнему краю. Встряхните — метель.';
+  else if (coarse)
+    hintText.textContent = 'Наклоняйте шар перетаскиванием. Тап по шару или резкий свайп — метель.';
+  else
+    hintText.textContent = 'Вращайте шар мышью. Резкий жест — метель; клик по шару — то же самое.';
+}
+updateHint();
+
+let lastStatusUpd = 0, lastStatusTxt = null;
+function refreshStatus(){
+  const live = sensorsLive();
+  if (live !== S.wasLive){
+    S.wasLive = live;
+    updateHint();
+    if (live){ toast('Датчики подключены: наклоняйте телефон, встряхните.'); kick(0.55); }
+  }
+  const now = performance.now();
+  if (now - lastStatusUpd < 120) return;   // живые значения обновляем ~8 раз/с
+  lastStatusUpd = now;
+
+  const show = coarse || live || S.orientN > 0;
+  let txt = '';
+  if (live){
+    const tilt = Math.round(THREE.MathUtils.radToDeg(Math.atan2(S.gx, -S.gy)));
+    txt = `датчики: β ${S.beta.toFixed(0)}° · γ ${S.gamma.toFixed(0)}° · крен ${tilt}°`
+        + (S.motionN > 0 ? ` · встряска ${Math.min(1, S.shakeIn/2).toFixed(2)}` : ' · тряска: нет данных');
+  } else if (show){
+    if (location.protocol === 'file:')
+      txt = 'датчики: страница открыта как файл — нужен http(s)-сервер';
+    else if (window.isSecureContext === false)
+      txt = 'датчики: браузер отдаёт их только по https (или localhost)';
+    else if (needsPerm && S.perm === 'denied')
+      txt = 'датчики: разрешение отклонено — настройки Safari → «Движение и ориентация»';
+    else if (needsPerm && S.perm === 'unknown')
+      txt = 'датчики: ждут разрешения — коснитесь шара или кнопки ниже';
+    else if (S.orientN > 0)
+      txt = 'датчики: наклон есть, тряска не приходит';
+    else
+      txt = 'датчики: событий нет — наклоняйте шар перетаскиванием';
+  }
+  if (txt !== lastStatusTxt){
+    lastStatusTxt = txt;
+    if (txt === ''){ sensorLine.hidden = true; }
+    else {
+      sensorLine.hidden = false;
+      sensorLine.textContent = txt;
+      sensorLine.classList.toggle('ok', live);
+      sensorLine.classList.toggle('warn', !live);
+    }
+  }
+}
+refreshStatus();
+
+/* ---- мышь / касание: параллакс, вращение, встряхивание ---- */
+let drag = null;
+const raycaster = new THREE.Raycaster(), ndc = new THREE.Vector2();
+addEventListener('pointerdown', e => {
+  if (e.target !== canvas) return;
+  requestPerms(); // первый жест — подходящий момент для iOS-разрешения
+  drag = { id: e.pointerId, x0: e.clientX, y0: e.clientY, t0: performance.now(),
+           lx: e.clientX, ly: e.clientY, lt: performance.now(), moved: 0 };
+  canvas.classList.add('grabbing');
+});
+addEventListener('pointermove', e => {
+  mxT = (e.clientX/innerWidth)*2 - 1;
+  myT = (e.clientY/innerHeight)*2 - 1;
+  if (!drag || e.pointerId !== drag.id) return;
+  const now = performance.now();
+  const dx = e.clientX - drag.lx, dy = e.clientY - drag.ly;
+  const v = Math.hypot(dx, dy) / Math.max(1, now - drag.lt); // px/ms
+  if (v > 1.3) shakeEnergy = Math.min(1.7, shakeEnergy + (v-1.3)*0.05);
+  dragYaw   = THREE.MathUtils.clamp(dragYaw   + dx*0.0055, -1.15, 1.15);
+  dragPitch = THREE.MathUtils.clamp(dragPitch + dy*0.0045, -0.55, 0.55);
+  drag.moved += Math.abs(dx) + Math.abs(dy);
+  drag.lx = e.clientX; drag.ly = e.clientY; drag.lt = now;
+});
+function endDrag(e){
+  if (!drag || (e.pointerId !== undefined && e.pointerId !== drag.id)) return;
+  if (drag.moved < 9 && performance.now() - drag.t0 < 400){
+    ndc.set((e.clientX/innerWidth)*2-1, -(e.clientY/innerHeight)*2+1);
+    raycaster.setFromCamera(ndc, camera);
+    if (raycaster.intersectObject(glass, false).length) kick(1.35);
+  }
+  drag = null;
+  canvas.classList.remove('grabbing');
+}
+addEventListener('pointerup', endDrag);
+addEventListener('pointercancel', endDrag);
+
+/* ---- кнопки ---- */
+document.getElementById('shakeBtn').addEventListener('click', () => kick(1.5));
+document.getElementById('gateBtn').addEventListener('click', requestPerms);
+document.getElementById('orderBtn').addEventListener('click', () =>
+  toast('Это прототип: корзина и оформление заказа появятся в следующей итерации.'));
+
+let toastTimer = null;
+function toast(msg){
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('on');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('on'), 3400);
+}
+
+/* ================= физика снега ================= */
+const CT = { nx:0, ny:0, nz:0, mu:0, hit:false };
+function mark(nx, ny, nz, mu){ CT.nx = nx; CT.ny = ny; CT.nz = nz; CT.mu = mu; CT.hit = true; }
+
+function collideShell(i){
+  const i3 = i*3;
+  const x = P[i3], y = P[i3+1], z = P[i3+2];
+  const d2 = x*x + y*y + z*z;
+  if (d2 > R_IN*R_IN){
+    const d = Math.sqrt(d2) || 1e-6;
+    const nx = x/d, ny = y/d, nz = z/d;
+    P[i3] = nx*R_IN; P[i3+1] = ny*R_IN; P[i3+2] = nz*R_IN;
+    const vn = V[i3]*nx + V[i3+1]*ny + V[i3+2]*nz;
+    if (vn > 0){ const j = vn*1.25; V[i3] -= nx*j; V[i3+1] -= ny*j; V[i3+2] -= nz*j; }
+    V[i3]*=0.98; V[i3+1]*=0.98; V[i3+2]*=0.98;
+    mark(nx, ny, nz, 0.07); // стекло скользкое
+  }
+}
+function collideSphere(i, s){
+  const i3 = i*3;
+  const dx = P[i3]-s.x, dy = P[i3+1]-s.y, dz = P[i3+2]-s.z;
+  const d2 = dx*dx + dy*dy + dz*dz;
+  if (d2 < s.r*s.r){
+    const d = Math.sqrt(d2) || 1e-5;
+    const nx = dx/d, ny = dy/d, nz = dz/d;
+    P[i3] = s.x + nx*s.r; P[i3+1] = s.y + ny*s.r; P[i3+2] = s.z + nz*s.r;
+    const vn = V[i3]*nx + V[i3+1]*ny + V[i3+2]*nz;
+    if (vn < 0){ const j = -vn*1.15; V[i3] += nx*j; V[i3+1] += ny*j; V[i3+2] += nz*j; }
+    V[i3]*=0.985; V[i3+1]*=0.985; V[i3+2]*=0.985;
+    mark(nx, ny, nz, s.mu);
+  }
+}
+function collideBox(i, b){
+  const i3 = i*3;
+  const dx = P[i3]-b.x, dy = P[i3+1]-b.y, dz = P[i3+2]-b.z;
+  if (Math.abs(dx) < b.hx && Math.abs(dy) < b.hy && Math.abs(dz) < b.hz){
+    const ex = b.hx - Math.abs(dx), ey = b.hy - Math.abs(dy), ez = b.hz - Math.abs(dz);
+    let nx = 0, ny = 0, nz = 0;
+    if (ex <= ey && ex <= ez){ nx = dx > 0 ? 1 : -1; P[i3] = b.x + nx*b.hx; }
+    else if (ey <= ez)       { ny = dy > 0 ? 1 : -1; P[i3+1] = b.y + ny*b.hy; }
+    else                     { nz = dz > 0 ? 1 : -1; P[i3+2] = b.z + nz*b.hz; }
+    const vn = V[i3]*nx + V[i3+1]*ny + V[i3+2]*nz;
+    if (vn < 0){ const j = -vn*1.05; V[i3] += nx*j; V[i3+1] += ny*j; V[i3+2] += nz*j; }
+    V[i3]*=0.97; V[i3+1]*=0.97; V[i3+2]*=0.97;
+    mark(nx, ny, nz, b.mu);
+  }
+}
+
+function substep(dt){
+  tPhys += dt;
+  const gx = _g.x, gy = _g.y, gz = _g.z;
+  const gl = Math.hypot(gx, gy, gz) || 1e-6;
+  const ux = -gx/gl, uy = -gy/gl, uz = -gz/gl;      // «вверх» внутри шара
+  const lift = shakePower * 3.1;
+
+  for (let i = 0; i < N; i++){
+    const i3 = i*3;
+
+    /* спящие: просыпаются от тряски или когда наклон превозмогает трение */
+    if (REST[i] === 1){
+      const nx = RN[i3], ny = RN[i3+1], nz = RN[i3+2];
+      const gn = gx*nx + gy*ny + gz*nz;
+      const tx = gx - nx*gn, ty = gy - ny*gn, tz = gz - nz*gn;
+      const tl = Math.hypot(tx, ty, tz);
+      if (shakePower > WAKE[i] || (gn < -1e-4 && tl > RMU[i]*(-gn))){
+        REST[i] = 0;
+        const k = 0.06/(tl || 1);
+        V[i3] += tx*k; V[i3+1] += ty*k; V[i3+2] += tz*k;
+      } else continue;
+    }
+
+    let vx = V[i3], vy = V[i3+1], vz = V[i3+2];
+    const px = P[i3], py = P[i3+1], pz = P[i3+2];
+
+    vx += gx*dt; vy += gy*dt; vz += gz*dt;
+
+    if (shakePower > 0.02){
+      const k = lift * (0.35 + 0.65*FR[i]) * (0.7 + 0.3*Math.sin(tPhys*(2.1 + PH[i]*3) + PH[i]*6.3));
+      vx += ux*k*dt; vy += uy*k*dt; vz += uz*k*dt;
+      const j = shakePower * 0.9 * dt;
+      vx += (Math.random()-0.5)*j; vy += (Math.random()-0.5)*j; vz += (Math.random()-0.5)*j;
+    }
+    if (swirl > 0.02){
+      const cx = uy*pz - uz*py, cy = uz*px - ux*pz, cz = ux*py - uy*px;
+      const cl = Math.hypot(cx, cy, cz);
+      if (cl > 0.15){
+        const k = swirl * 1.7 * dt * (0.5 + 0.5*FR[i]) / cl;
+        vx += cx*k; vy += cy*k; vz += cz*k;
+      }
+    }
+    vx += Math.sin(tPhys*1.3 + PH[i]*11.0)*0.22*dt;
+    vz += Math.cos(tPhys*1.05 + PH[i]*7.3)*0.22*dt;
+
+    const damp = Math.exp(-DRG[i]*(1 - 0.55*Math.min(1, shakePower))*dt);
+    vx *= damp; vy *= damp; vz *= damp;
+
+    const v2 = vx*vx + vy*vy + vz*vz;
+    if (v2 > 4.4){ const sc = 2.1/Math.sqrt(v2); vx *= sc; vy *= sc; vz *= sc; }
+
+    P[i3] = px + vx*dt; P[i3+1] = py + vy*dt; P[i3+2] = pz + vz*dt;
+    V[i3] = vx; V[i3+1] = vy; V[i3+2] = vz;
+
+    CT.hit = false;
+    collideShell(i);
+    collideSphere(i, HILL);
+    for (let t = 0; t < 4; t++) collideSphere(i, TREES[t]);
+    collideBox(i, HOUSE);
+
+    if (CT.hit){
+      const sp2 = V[i3]*V[i3] + V[i3+1]*V[i3+1] + V[i3+2]*V[i3+2];
+      const gn = gx*CT.nx + gy*CT.ny + gz*CT.nz;
+      if (sp2 < 0.0011 && gn < -0.55*gl){
+        REST[i] = 1;
+        RN[i3] = CT.nx; RN[i3+1] = CT.ny; RN[i3+2] = CT.nz;
+        RMU[i] = CT.mu;
+        V[i3] = 0; V[i3+1] = 0; V[i3+2] = 0;
+      }
+    }
+  }
+}
+
+/* ================= главный цикл ================= */
+const clock = new THREE.Clock();
+setTimeout(() => kick(1.1), 800); // шар «просыпается» при загрузке
+
+function loop(){
+  requestAnimationFrame(loop);
+  const dt = Math.min(0.033, clock.getDelta());
+  const t = clock.elapsedTime;
+
+  /* --- цель ориентации шара --- */
+  mxS += (mxT - mxS)*0.06; myS += (myT - myS)*0.06;
+  if (fine && !drag){ basePitch = myS*0.09; baseRoll = mxS*0.11; }
+  else { basePitch *= Math.exp(-dt*3); baseRoll *= Math.exp(-dt*3); }
+
+  /* лёгкий визуальный крен от реальной гравитации: шар чуть заваливается за снегом */
+  const live = sensorsLive();
+  const tR = live ? -THREE.MathUtils.clamp(S.gx / (Math.hypot(S.gx, S.gy) || 1e-6), -1, 1) * 0.3 : 0;
+  const tP = live ?  THREE.MathUtils.clamp(S.gz, -1, 1) * 0.24 : 0;
+  gyroRoll  += (tR - gyroRoll)  * (1 - Math.exp(-dt*5));
+  gyroPitch += (tP - gyroPitch) * (1 - Math.exp(-dt*5));
+
+  if (!drag){ dragYaw *= Math.exp(-dt*1.4); dragPitch *= Math.exp(-dt*1.2); }
+  const wobbleRoll = Math.sin(t*0.43 + 1.7)*0.02;
+  _e.set(
+    THREE.MathUtils.clamp(basePitch + dragPitch + gyroPitch, -0.62, 0.62),
+    dragYaw,
+    THREE.MathUtils.clamp(baseRoll + wobbleRoll + gyroRoll, -0.5, 0.5),
+    'YXZ'
+  );
+  _tq.setFromEuler(_e);
+  _pq.copy(rig.quaternion);
+  rig.quaternion.slerp(_tq, 1 - Math.exp(-dt*8));
+
+  /* резкое вращение — тоже тряска */
+  const av = _pq.angleTo(rig.quaternion) / Math.max(dt, 1e-4);
+  if (av > 2.6) shakeEnergy = Math.min(1.7, shakeEnergy + (av-2.6)*0.03);
+
+  /* тряска, увиденная акселерометром/гиро телефона */
+  if (S.shakeIn > 0.01){
+    shakeEnergy = Math.max(shakeEnergy, Math.min(1.7, S.shakeIn));
+    S.shakeIn *= Math.exp(-dt*2.4);
+  }
+  shakeEnergy *= Math.exp(-dt*1.5);
+  shakePower = Math.max(shakeEnergy, shakePower*Math.exp(-dt*1.5));
+  swirl = Math.max(swirl*Math.exp(-dt*1.0), Math.min(1.25, shakePower*0.95));
+
+  /* --- физика в локальных координатах шара --- */
+  /* гравитация = реальное направление «вниз» в системе экрана:
+     наклоняете телефон — меняется гравитация внутри шара, а сам шар остаётся на месте */
+  _g.set(0, -1, 0);
+  if (live){
+    let gx = S.gx, gy = S.gy, gz = S.gz;
+    const m = Math.hypot(gx, gy);
+    if (m < 0.22) gy -= (0.22 - m) * 1.5;   // телефон почти плашмя — тянем снег к видимому низу
+    const L = Math.hypot(gx, gy, gz) || 1e-6;
+    _g.set(gx/L, gy/L, gz/L);
+  }
+  _g.multiplyScalar(G).applyQuaternion(_iq.copy(rig.quaternion).invert());
+  substep(dt/2); substep(dt/2);
+  posAttr.needsUpdate = true;
+
+  /* --- фоновой снег вокруг --- */
+  for (let i = 0; i < NB; i++){
+    const i3 = i*3;
+    BP[i3+1] -= BV[i]*dt;
+    BP[i3]   += Math.sin(t*0.25 + BPH[i])*0.05*dt;
+    if (BP[i3+1] < -3.2){ BP[i3+1] += 6.4; BP[i3] = (Math.random()-0.5)*11; }
+  }
+  bgAttr.needsUpdate = true;
+
+  /* --- живой свет в окне --- */
+  const fl = 0.68 + 0.32*(0.6*Math.sin(t*1.9) + 0.4*Math.sin(t*4.7 + 1.3));
+  winMat.color.setRGB(1.05, 0.55 + 0.28*fl, 0.24 + 0.14*fl);
+  winLight.intensity = 0.5 + 1.0*fl;
+  uniforms.uWarmI.value = 0.35 + 0.4*fl;
+
+  camera.position.set(camBase.x + Math.sin(t*0.1)*0.03, camBase.y + Math.cos(t*0.13)*0.02, camBase.z);
+
+  uniforms.uTime.value = t;
+  refreshStatus();
+  renderer.render(scene, camera);
+}
+loop();
+</script>
+</body>
+</html>
